@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "lvgl.h"
 #include "src/drivers/sdl/lv_sdl_mouse.h"
@@ -132,7 +133,12 @@ int main(void)
     ui_update_performance(38.0f, 67.0f, 42.0f, true, 15.0f,
                           64.0f, true, 57.0f, true, 12,
                           2.4f, 18.7f, true);
-    ui_update_codex_quota(100, 91, true);
+    ui_update_agent_state("WORKING");
+    ui_update_quota_provider("火山方舟");
+    ui_update_codex_quota(51, 78, 25, true, false,
+                          (int32_t)time(NULL) + 31 * 60,
+                          (int32_t)time(NULL) + (2 * 24 + 9) * 3600,
+                          (int32_t)time(NULL) + (1 * 24 + 9) * 3600);
     ui_update_api_balance("DeepSeek", "CNY 86.42");
     ui_weather_info_t weather_demo = {};
     weather_demo.available = true;

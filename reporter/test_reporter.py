@@ -112,7 +112,7 @@ class ArkQuotaCollectorTests(unittest.TestCase):
                 {'Action': 'GetCodingPlanUsage', 'Version': '2024-01-01'}),
             self._REFERENCE_AUTH)
 
-    def test_parse_maps_session_and_weekly_ignoring_monthly(self):
+    def test_parse_maps_session_weekly_and_monthly(self):
         snapshot = reporter.ArkQuotaCollector._parse_snapshot({
             'Status': 'Running',
             'QuotaUsage': [
@@ -127,16 +127,19 @@ class ArkQuotaCollectorTests(unittest.TestCase):
         self.assertEqual(snapshot.source, 'ark_api')
         self.assertEqual(snapshot.short_remaining_percent, 49)
         self.assertEqual(snapshot.week_remaining_percent, 78)
+        self.assertEqual(snapshot.month_remaining_percent, 30)
         self.assertEqual((snapshot.short_resets_at, snapshot.week_resets_at),
                          (1791460408, 1791734400))
+        self.assertEqual(snapshot.month_resets_at, 1791647999)
 
     def test_parse_tolerates_missing_and_malformed_entries(self):
         snapshot = reporter.ArkQuotaCollector._parse_snapshot({
-            'QuotaUsage': [{'Level': 'monthly', 'Percent': 10}, 'junk',
+            'QuotaUsage': [{'Level': 'weekly', 'Percent': 10}, 'junk',
                            {'Level': 'session', 'Percent': 'bad'}],
         })
         self.assertIsNone(snapshot.short_remaining_percent)
-        self.assertIsNone(snapshot.week_remaining_percent)
+        self.assertEqual(snapshot.week_remaining_percent, 90)
+        self.assertIsNone(snapshot.month_remaining_percent)
 
     def test_parse_accepts_unknown_short_level_as_fallback(self):
         snapshot = reporter.ArkQuotaCollector._parse_snapshot({
@@ -156,6 +159,59 @@ class ArkQuotaCollectorTests(unittest.TestCase):
         self.assertGreaterEqual(reporter.ArkQuotaCollector._POLL_SECONDS, 300)
         self.assertGreaterEqual(reporter.ArkQuotaCollector._CACHE_SECONDS,
                                 2 * reporter.ArkQuotaCollector._POLL_SECONDS)
+
+class DiscoveryPayloadTests(unittest.TestCase):
+    def test_quota_reset_timestamps_are_published(self):
+        class StubQuotaCollector:
+            provider_name = "ark"
+            @staticmethod
+            def snapshot():
+                return reporter.QuotaSnapshot(
+                    short_remaining_percent=51, week_remaining_percent=78,
+                    month_remaining_percent=30,
+                    short_resets_at=1791460408, week_resets_at=1791734400,
+                    month_resets_at=1791647999,
+                    updated_at=10, source="ark_api")
+
+        with tempfile.TemporaryDirectory() as root, patch.dict(
+            os.environ, {"SYNA_REPORTER_DATA_DIR": root}, clear=False
+        ):
+            state = reporter.ReporterState(
+                {"reporter_id": "x", "computer_name": "PC", "pairing_token": "t"},
+                reporter.MetricsCollector(), reporter.CodexAgentMonitor(),
+                StubQuotaCollector(), reporter.NeteaseMediaMonitor(), 8765)
+            payload = state.discovery("127.0.0.1")
+        self.assertEqual(payload["codex_short_remaining"], 51)
+        self.assertEqual(payload["codex_week_remaining"], 78)
+        self.assertEqual(payload["codex_month_remaining"], 30)
+        self.assertEqual(payload["codex_short_resets_at"], 1791460408)
+        self.assertEqual(payload["codex_week_resets_at"], 1791734400)
+        self.assertEqual(payload["codex_month_resets_at"], 1791647999)
+        self.assertEqual(payload["quota_provider"], "ark")
+        self.assertEqual(payload["quota_provider_title"], "火山方舟")
+
+    def test_missing_reset_timestamps_send_sentinel(self):
+        class StubQuotaCollector:
+            provider_name = "codex"
+            @staticmethod
+            def snapshot():
+                return reporter.QuotaSnapshot(updated_at=10, source="unavailable")
+
+        with tempfile.TemporaryDirectory() as root, patch.dict(
+            os.environ, {"SYNA_REPORTER_DATA_DIR": root}, clear=False
+        ):
+            state = reporter.ReporterState(
+                {"reporter_id": "x", "computer_name": "PC", "pairing_token": "t"},
+                reporter.MetricsCollector(), reporter.CodexAgentMonitor(),
+                StubQuotaCollector(), reporter.NeteaseMediaMonitor(), 8765)
+            payload = state.discovery("127.0.0.1")
+        self.assertEqual(payload["codex_short_resets_at"], -1)
+        self.assertEqual(payload["codex_week_resets_at"], -1)
+        self.assertEqual(payload["codex_month_remaining"], -1)
+        self.assertEqual(payload["codex_month_resets_at"], -1)
+        self.assertEqual(payload["quota_provider"], "codex")
+        self.assertEqual(payload["quota_provider_title"], "Codex")
+
 
 class ThermalParsingTests(unittest.TestCase):
     def tearDown(self):

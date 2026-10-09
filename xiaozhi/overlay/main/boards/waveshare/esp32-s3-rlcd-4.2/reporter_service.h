@@ -25,7 +25,12 @@ struct PanelReporterMetrics {
     float download_bytes_per_second = 0;
     int16_t codex_short_remaining = -1;
     int16_t codex_week_remaining = -1;
+    int16_t codex_month_remaining = -1;
+    int32_t codex_short_resets_at = -1;
+    int32_t codex_week_resets_at = -1;
+    int32_t codex_month_resets_at = -1;
     bool codex_quota_stale = false;
+    char quota_provider_title[24] = "Codex";
     bool media_available = false;
     uint32_t media_position_seconds = 0;
     uint32_t media_duration_seconds = 0;
@@ -75,7 +80,12 @@ private:
         char agent_state[16] = "OFFLINE";
         int16_t codex_short_remaining = -1;
         int16_t codex_week_remaining = -1;
+        int16_t codex_month_remaining = -1;
+        int32_t codex_short_resets_at = -1;
+        int32_t codex_week_resets_at = -1;
+        int32_t codex_month_resets_at = -1;
         bool codex_quota_stale = false;
+        char quota_provider_title[24] = "Codex";
     };
 
     ReporterService();

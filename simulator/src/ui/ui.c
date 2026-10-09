@@ -123,11 +123,14 @@ static lv_obj_t *syna_wifi_status_image;
 static lv_obj_t *dashboard_pc_status_image;
 static lv_obj_t *performance_pc_status_image;
 static lv_obj_t *syna_pc_status_image;
-static lv_obj_t *dashboard_agent_status_image;
-static lv_obj_t *dashboard_short_quota_label;
-static lv_obj_t *dashboard_week_quota_label;
-static lv_obj_t *dashboard_short_quota_fill;
-static lv_obj_t *dashboard_week_quota_fill;
+static lv_obj_t *dashboard_agent_status_label;
+static lv_obj_t *dashboard_quota_source_label;
+static lv_obj_t *dashboard_quota_source_value;
+static lv_obj_t *dashboard_quota_caption[3];
+static lv_obj_t *dashboard_quota_countdown[3];
+static lv_obj_t *dashboard_quota_percent[3];
+static lv_obj_t *dashboard_quota_track[3];
+static lv_obj_t *dashboard_quota_fill[3];
 static lv_obj_t *dashboard_media_status_label;
 static lv_obj_t *dashboard_media_title_label;
 static lv_obj_t *dashboard_media_artist_label;
@@ -190,9 +193,8 @@ static lv_obj_t *make_value_label(lv_obj_t *parent, const lv_font_t *font,
                                   int32_t height);
 static lv_obj_t *make_panel(lv_obj_t *parent, int32_t x, int32_t y,
                             int32_t width, int32_t height);
-static lv_obj_t *make_progress_fill(lv_obj_t *parent, int32_t y, int percent);
 static lv_obj_t *make_performance_fill(lv_obj_t *parent, int32_t y, int percent);
-static const lv_image_dsc_t *status_asset_for(const char *state);
+static const char *agent_state_text(const char *state);
 static const lv_image_dsc_t *wifi_asset_for(ui_wifi_state_t state);
 static const lv_image_dsc_t *pc_asset_for(bool connected);
 static void agent_done_blink_cb(lv_timer_t *timer);
@@ -340,24 +342,6 @@ static lv_obj_t *make_panel(lv_obj_t *parent, int32_t x, int32_t y,
     return panel;
 }
 
-static lv_obj_t *make_progress_fill(lv_obj_t *parent, int32_t y, int percent)
-{
-    if(percent < 0) percent = 0;
-    if(percent > 100) percent = 100;
-
-    lv_obj_t *fill = lv_obj_create(parent);
-    lv_obj_remove_flag(fill, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_pos(fill, 19, y);
-    lv_obj_set_size(fill, (142 * percent) / 100, 11);
-    lv_obj_set_style_radius(fill, 3, 0);
-    lv_obj_set_style_border_width(fill, 0, 0);
-    lv_obj_set_style_pad_all(fill, 0, 0);
-    lv_obj_set_style_bg_color(fill, COLOR_BLACK, 0);
-    lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
-    if(percent <= 0) lv_obj_add_flag(fill, LV_OBJ_FLAG_HIDDEN);
-    return fill;
-}
-
 static lv_obj_t *make_performance_fill(lv_obj_t *parent, int32_t y, int percent)
 {
     if(percent < 0) percent = 0;
@@ -375,27 +359,27 @@ static lv_obj_t *make_performance_fill(lv_obj_t *parent, int32_t y, int percent)
     return fill;
 }
 
-static const lv_image_dsc_t *status_asset_for(const char *state)
+static const char *agent_state_text(const char *state)
 {
-    if(strcmp(state, "WAITING") == 0) return &ui_status_waiting;
-    if(strcmp(state, "DONE") == 0) return &ui_status_done;
-    if(strcmp(state, "IDLE") == 0) return &ui_status_idle;
-    if(strcmp(state, "OFFLINE") == 0) return &ui_status_offline;
-    return &ui_status_working;
+    if(strcmp(state, "WORKING") == 0) return "工作中";
+    if(strcmp(state, "DONE") == 0) return "已完成";
+    if(strcmp(state, "IDLE") == 0) return "空闲";
+    if(strcmp(state, "WAITING") == 0) return "等待输入";
+    if(strcmp(state, "LOGIN_REQUIRED") == 0) return "请登录";
+    return "离线";
 }
 
 static void agent_done_blink_cb(lv_timer_t *timer)
 {
     (void)timer;
-    if(strcmp(current_agent_state, "DONE") != 0 ||
-       dashboard_agent_status_image == NULL ||
-       !lv_obj_is_valid(dashboard_agent_status_image)) return;
+    if(dashboard_agent_status_label == NULL ||
+       !lv_obj_is_valid(dashboard_agent_status_label)) return;
 
-    if(lv_obj_has_flag(dashboard_agent_status_image, LV_OBJ_FLAG_HIDDEN)) {
-        lv_obj_remove_flag(dashboard_agent_status_image, LV_OBJ_FLAG_HIDDEN);
+    if(lv_obj_has_flag(dashboard_agent_status_label, LV_OBJ_FLAG_HIDDEN)) {
+        lv_obj_remove_flag(dashboard_agent_status_label, LV_OBJ_FLAG_HIDDEN);
     }
     else {
-        lv_obj_add_flag(dashboard_agent_status_image, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(dashboard_agent_status_label, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -442,7 +426,6 @@ void ui_show_dashboard(void)
     lv_obj_t *screen = lv_obj_create(NULL);
     dashboard_screen = screen;
     style_screen(screen);
-    const computer_t *computer = &computers[current_computer];
 
     lv_obj_t *base = lv_image_create(screen);
     lv_image_set_src(base, &ui_screen_base);
@@ -470,9 +453,16 @@ void ui_show_dashboard(void)
     lv_image_set_src(dashboard_pc_status_image, pc_asset_for(current_pc_connected));
     lv_obj_set_pos(dashboard_pc_status_image, 236, 270);
 
-    /* The reference background contains the original WORKING block. Keep an
-     * opaque white layer below the dynamic status image so a hidden DONE image
-     * flashes to white instead of revealing that baked-in block. */
+    /* 标题行自绘："AI AGENT" + 行内状态徽标（圆点 + 文字，替代黑色胶囊）。 */
+    make_white_mask(screen, 14, 82, 155, 26);
+    make_label(screen, "AI AGENT", &ui_font_18_regular, 19, 84);
+    dashboard_agent_status_label = make_label(
+        screen, "● 离线", &ui_font_14_cjk, 76, 86);
+    lv_obj_set_width(dashboard_agent_status_label, 92);
+    lv_obj_set_style_text_align(dashboard_agent_status_label,
+                                LV_TEXT_ALIGN_RIGHT, 0);
+
+    /* 底图里蚀刻的旧状态胶囊区域遮白，留白分隔标题行与额度区。 */
     lv_obj_t *agent_status_mask = lv_obj_create(screen);
     lv_obj_remove_flag(agent_status_mask, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_pos(agent_status_mask, 46, 108);
@@ -482,11 +472,6 @@ void ui_show_dashboard(void)
     lv_obj_set_style_pad_all(agent_status_mask, 0, 0);
     lv_obj_set_style_bg_color(agent_status_mask, COLOR_WHITE, 0);
     lv_obj_set_style_bg_opa(agent_status_mask, LV_OPA_COVER, 0);
-
-    dashboard_agent_status_image = lv_image_create(screen);
-    lv_image_set_src(dashboard_agent_status_image,
-                     status_asset_for(current_agent_state));
-    lv_obj_set_pos(dashboard_agent_status_image, 46, 108);
 
     make_white_mask(screen, 221, 81, 78, 20);
     make_white_mask(screen, 255, 115, 127, 23);
@@ -540,32 +525,55 @@ void ui_show_dashboard(void)
     lv_obj_set_style_bg_color(dashboard_media_progress_knob, COLOR_BLACK, 0);
     lv_obj_set_style_bg_opa(dashboard_media_progress_knob, LV_OPA_COVER, 0);
 
-    char short_quota[8];
-    char week_quota[8];
-    if(computer->codex_short_percent >= 0) {
-        snprintf(short_quota, sizeof(short_quota), "%d%%", computer->codex_short_percent);
-        snprintf(week_quota, sizeof(week_quota), "%d%%", computer->codex_week_percent);
-    }
-    else {
-        snprintf(short_quota, sizeof(short_quota), "--");
-        snprintf(week_quota, sizeof(week_quota), "--");
-    }
+    /* 套餐来源行：填充标题下方空白区（键值排布，右缘与网格对齐）。 */
+    make_white_mask(screen, 14, 108, 155, 30);
+    dashboard_quota_source_label = make_label(
+        screen, "套餐", &ui_font_14_cjk, 19, 113);
+    dashboard_quota_source_value = make_label(
+        screen, "--", &ui_font_14_cjk, 100, 113);
+    lv_obj_set_width(dashboard_quota_source_value, 68);
+    lv_obj_set_style_text_align(dashboard_quota_source_value,
+                                LV_TEXT_ALIGN_RIGHT, 0);
 
-    dashboard_short_quota_fill = make_progress_fill(
-        screen, 179, computer->codex_short_percent);
-    dashboard_week_quota_fill = make_progress_fill(
-        screen, 222, computer->codex_week_percent);
-    dashboard_short_quota_label = make_label(
-        screen, short_quota, &ui_font_18_regular, 106, 156);
-    lv_obj_set_size(dashboard_short_quota_label, 57, 22);
-    lv_label_set_long_mode(dashboard_short_quota_label, LV_LABEL_LONG_CLIP);
-    lv_obj_set_style_text_align(dashboard_short_quota_label, LV_TEXT_ALIGN_RIGHT, 0);
-
-    dashboard_week_quota_label = make_label(
-        screen, week_quota, &ui_font_18_regular, 106, 199);
-    lv_obj_set_size(dashboard_week_quota_label, 57, 22);
-    lv_label_set_long_mode(dashboard_week_quota_label, LV_LABEL_LONG_CLIP);
-    lv_obj_set_style_text_align(dashboard_week_quota_label, LV_TEXT_ALIGN_RIGHT, 0);
+    /* 额度区整体自绘：紧凑网格（标题 | 进度条 | 百分比 | 倒计时）。 */
+    make_white_mask(screen, 14, 147, 153, 100);
+    static const char *const kQuotaCaptions[3] = {"5h", "周", "月"};
+    for(int index = 0; index < 3; ++index) {
+        const int row_y = 152 + index * 30;
+        dashboard_quota_caption[index] = make_label(
+            screen, kQuotaCaptions[index], &ui_font_14_cjk, 19, row_y);
+        lv_obj_t *track = lv_obj_create(screen);
+        lv_obj_remove_flag(track, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_pos(track, 46, row_y + 8);
+        lv_obj_set_size(track, 40, 5);
+        lv_obj_set_style_radius(track, 1, 0);
+        lv_obj_set_style_border_width(track, 1, 0);
+        lv_obj_set_style_border_color(track, COLOR_BLACK, 0);
+        lv_obj_set_style_bg_color(track, COLOR_WHITE, 0);
+        lv_obj_set_style_bg_opa(track, LV_OPA_COVER, 0);
+        lv_obj_set_style_pad_all(track, 0, 0);
+        dashboard_quota_track[index] = track;
+        lv_obj_t *fill = lv_obj_create(track);
+        lv_obj_remove_flag(fill, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_pos(fill, 0, 0);
+        lv_obj_set_size(fill, 0, 3);
+        lv_obj_set_style_radius(fill, 0, 0);
+        lv_obj_set_style_border_width(fill, 0, 0);
+        lv_obj_set_style_pad_all(fill, 0, 0);
+        lv_obj_set_style_bg_color(fill, COLOR_BLACK, 0);
+        lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
+        dashboard_quota_fill[index] = fill;
+        dashboard_quota_percent[index] = make_label(
+            screen, "--", &ui_font_14_regular, 88, row_y + 1);
+        lv_obj_set_width(dashboard_quota_percent[index], 44);
+        lv_obj_set_style_text_align(dashboard_quota_percent[index],
+                                    LV_TEXT_ALIGN_RIGHT, 0);
+        dashboard_quota_countdown[index] = make_label(
+            screen, "", &ui_font_14_cjk, 130, row_y + 1);
+        lv_obj_set_width(dashboard_quota_countdown[index], 34);
+        lv_obj_set_style_text_align(dashboard_quota_countdown[index],
+                                    LV_TEXT_ALIGN_RIGHT, 0);
+    }
     lv_screen_load(screen);
 }
 
@@ -1266,7 +1274,7 @@ static bool station_ip_text(char *buf, size_t len)
 static bool station_ip_text(char *buf, size_t len)
 {
     const char *mock_ip = getenv("AI_PANEL_MOCK_IP");
-    if(mock_ip == NULL || mock_ip[0] == ' ') return false;
+    if(mock_ip == NULL || mock_ip[0] == '\0') return false;
     snprintf(buf, len, "%s", mock_ip);
     return true;
 }
@@ -1564,12 +1572,14 @@ void ui_update_agent_state(const char *state)
     if(state == NULL || state[0] == '\0') state = "OFFLINE";
     const bool state_changed = strcmp(current_agent_state, state) != 0;
     snprintf(current_agent_state, sizeof(current_agent_state), "%s", state);
-    if(dashboard_agent_status_image != NULL &&
-       lv_obj_is_valid(dashboard_agent_status_image)) {
-        lv_image_set_src(dashboard_agent_status_image,
-                         status_asset_for(current_agent_state));
-        if(state_changed) {
-            lv_obj_remove_flag(dashboard_agent_status_image, LV_OBJ_FLAG_HIDDEN);
+    if(dashboard_agent_status_label != NULL &&
+       lv_obj_is_valid(dashboard_agent_status_label)) {
+        char status_text[40];
+        snprintf(status_text, sizeof(status_text), "● %s",
+                 agent_state_text(current_agent_state));
+        lv_label_set_text(dashboard_agent_status_label, status_text);
+        if(strcmp(current_agent_state, "DONE") != 0) {
+            lv_obj_remove_flag(dashboard_agent_status_label, LV_OBJ_FLAG_HIDDEN);
         }
     }
     if(agent_done_blink_timer != NULL && state_changed) {
@@ -1579,33 +1589,87 @@ void ui_update_agent_state(const char *state)
         }
         else {
             lv_timer_pause(agent_done_blink_timer);
+            if(dashboard_agent_status_label != NULL &&
+               lv_obj_is_valid(dashboard_agent_status_label)) {
+                lv_obj_remove_flag(dashboard_agent_status_label, LV_OBJ_FLAG_HIDDEN);
+            }
         }
     }
 }
 
-void ui_update_codex_quota(int short_remaining_percent,
-                           int week_remaining_percent, bool connected)
+void ui_update_quota_provider(const char *name)
 {
-    const int values[2] = {short_remaining_percent, week_remaining_percent};
-    lv_obj_t *labels[2] = {dashboard_short_quota_label,
-                           dashboard_week_quota_label};
-    lv_obj_t *fills[2] = {dashboard_short_quota_fill,
-                          dashboard_week_quota_fill};
-    for(int index = 0; index < 2; ++index) {
+    if(dashboard_quota_source_value == NULL ||
+       !lv_obj_is_valid(dashboard_quota_source_value)) return;
+    lv_label_set_text(dashboard_quota_source_value,
+                      (name != NULL && name[0] != '\0') ? name : "未知");
+}
+
+// 额度重置倒计时（紧凑）："31m" / "9h" / "2d9h"；未知为空。
+static void format_quota_countdown(char *buffer, size_t size, int32_t resets_at)
+{
+    buffer[0] = '\0';
+    if(resets_at <= 0) return;
+    int64_t diff = (int64_t)resets_at - (int64_t)time(NULL);
+    if(diff < 60) {
+        snprintf(buffer, size, "<1m");
+        return;
+    }
+    if(diff < 60 * 60) {
+        snprintf(buffer, size, "%dm", (int)(diff / 60));
+        return;
+    }
+    int64_t days = diff / (24 * 60 * 60);
+    if(days >= 10) {
+        snprintf(buffer, size, "%dd", (int)days);
+        return;
+    }
+    int hours = (int)((diff % (24 * 60 * 60)) / (60 * 60));
+    if(days >= 1) {
+        snprintf(buffer, size, "%dd%dh", (int)days, hours);
+        return;
+    }
+    snprintf(buffer, size, "%dh", (int)(diff / (60 * 60)));
+}
+
+void ui_update_codex_quota(int short_remaining_percent, int week_remaining_percent,
+                           int month_remaining_percent, bool connected, bool stale,
+                           int32_t short_resets_at, int32_t week_resets_at,
+                           int32_t month_resets_at)
+{
+    const int values[3] = {short_remaining_percent, week_remaining_percent,
+                           month_remaining_percent};
+    const int32_t resets[3] = {short_resets_at, week_resets_at, month_resets_at};
+    for(int index = 0; index < 3; ++index) {
         const bool valid = connected && values[index] >= 0 && values[index] <= 100;
         char text[8];
-        if(valid) snprintf(text, sizeof(text), "%d%%", values[index]);
+        if(valid) snprintf(text, sizeof(text), "%s%d%%", stale ? "~" : "", values[index]);
         else snprintf(text, sizeof(text), "--");
-        if(labels[index] != NULL && lv_obj_is_valid(labels[index])) {
-            lv_label_set_text(labels[index], text);
+        if(dashboard_quota_percent[index] != NULL &&
+           lv_obj_is_valid(dashboard_quota_percent[index])) {
+            lv_label_set_text(dashboard_quota_percent[index], text);
         }
-        if(fills[index] != NULL && lv_obj_is_valid(fills[index])) {
+        if(dashboard_quota_fill[index] != NULL &&
+           lv_obj_is_valid(dashboard_quota_fill[index])) {
             if(valid && values[index] > 0) {
-                lv_obj_set_width(fills[index], (142 * values[index]) / 100);
-                lv_obj_remove_flag(fills[index], LV_OBJ_FLAG_HIDDEN);
+                lv_obj_set_width(dashboard_quota_fill[index], (38 * values[index]) / 100);
+                lv_obj_remove_flag(dashboard_quota_fill[index], LV_OBJ_FLAG_HIDDEN);
             }
             else {
-                lv_obj_add_flag(fills[index], LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(dashboard_quota_fill[index], LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+        char countdown[40];
+        format_quota_countdown(countdown, sizeof(countdown),
+                               connected ? resets[index] : -1);
+        if(dashboard_quota_countdown[index] != NULL &&
+           lv_obj_is_valid(dashboard_quota_countdown[index])) {
+            if(countdown[0] != '\0') {
+                lv_label_set_text(dashboard_quota_countdown[index], countdown);
+                lv_obj_remove_flag(dashboard_quota_countdown[index], LV_OBJ_FLAG_HIDDEN);
+            }
+            else {
+                lv_obj_add_flag(dashboard_quota_countdown[index], LV_OBJ_FLAG_HIDDEN);
             }
         }
     }

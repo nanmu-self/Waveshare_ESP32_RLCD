@@ -55,7 +55,7 @@ Reporter 优先从 Codex 本地 `logs_2.sqlite` 提取固定格式的任务开�
 
 ## 额度来源（Codex / 火山方舟，可扩展）
 
-额度卡片的数据源可切换，状态窗口“额度来源”按钮里选择；协议字段名固定为 `codex_short_remaining` / `codex_week_remaining` / `codex_login_required` / `codex_quota_stale`，开发板不感知数据源，切换无需刷固件。
+额度卡片的数据源可切换，状态窗口“额度来源”按钮里选择；协议字段名固定为 `codex_short_remaining` / `codex_week_remaining` / `codex_month_remaining` / `codex_short_resets_at` / `codex_week_resets_at` / `codex_month_resets_at` / `quota_provider` / `quota_provider_title` / `codex_login_required` / `codex_quota_stale`（额度为剩余百分比，重置时间为 Unix 秒，-1 表示未知；Codex 源无月额度；provider 字段供开发板展示套餐来源），开发板不感知数据源，切换无需刷固件。
 
 - **Codex（默认）**：每 30 秒通过本机 Codex App Server 的 `account/rateLimits/read` 读取账户限额，把 `usedPercent` 换算为剩余百分比，并按 `windowDurationMins` 区分短周期额度和周额度。
 - **火山方舟 Coding Plan**：每 5 分钟调用 `GetCodingPlanUsage`（火山引擎 V4 签名，仅标准库实现；云端接口频控阈值未公开，实测短时突发可用但长周期配额未知，故采用保守轮询并指数退避），`session` 档映射短周期、`weekly` 档映射周额度，`monthly` 暂不展示。需要在本机保存访问密钥（火山引擎控制台 → 访问控制 IAM → API 访问密钥），AK/SK 只写入 `%LOCALAPPDATA%\AIAgentPanel\reporter.json`，仅用于只读查询额度；未配置时屏幕显示 `--`，密钥无效时状态窗口提示“密钥无效”。

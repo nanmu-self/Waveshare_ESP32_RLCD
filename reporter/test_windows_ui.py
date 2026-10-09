@@ -2,17 +2,19 @@
 """Run with QT_QPA_PLATFORM=offscreen; never touches the user's real worker."""
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+import json
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 try:
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QLineEdit, QDialog, QPushButton
 except ImportError:
     raise unittest.SkipTest("Windows UI tests require PySide6-Essentials")
 from PySide6.QtCore import QEventLoop, QTimer
 from windows_ui import (ReporterWindow, number, launch_command, set_login, login_enabled,
-                        read_settings, write_settings)
+                        read_settings, write_settings, read_pairing_token)
 
 app = QApplication.instance() or QApplication([])
 
@@ -66,6 +68,23 @@ class WindowTests(unittest.TestCase):
             write_settings({'ark_access_key_id': 'AK'})
             self.assertEqual(read_settings().get('quota_provider'), 'ark')  # 不丢已有键
 
+    def test_quota_source_dialog_lists_all_providers_and_prefills(self):
+        dialog, combo, editors = ReporterWindow._build_quota_dialog(
+            {'quota_provider': 'ark', 'ark_access_key_id': 'AKLTdemo',
+             'ark_secret_access_key': 'sk-secret'})
+        # 回归防护：下拉框必须已加入表单布局（曾漏 addRow 导致只剩两行文字）。
+        self.assertIs(combo.parent(), dialog)
+        self.assertEqual([combo.itemData(i) for i in range(combo.count())], ['codex', 'ark'])
+        self.assertEqual(combo.currentData(), 'ark')
+        self.assertEqual(editors['ark_access_key_id'].text(), 'AKLTdemo')
+        self.assertEqual(editors['ark_secret_access_key'].echoMode(), QLineEdit.EchoMode.Password)
+        # 切到 Codex 时方舟字段隐藏，切回时恢复。
+        combo.setCurrentIndex(0)
+        self.assertFalse(editors['ark_access_key_id'].isVisibleTo(dialog))
+        combo.setCurrentIndex(1)
+        self.assertTrue(editors['ark_access_key_id'].isVisibleTo(dialog))
+        dialog.deleteLater()
+
     def test_disconnect_clears_all_live_values(self):
         self.window.render({'computer_name': 'old host', 'performance': {'gpu_percent': 99}, 'media': {'available': True, 'title': 'old song'}, 'devices':[{'ip':'test'}]})
         self.window.offline()
@@ -74,6 +93,42 @@ class WindowTests(unittest.TestCase):
         self.assertNotIn('test', self.window.labels['device'].text())
         self.assertFalse(self.window.diagnostic.isEnabled())
         self.assertEqual(self.window.labels['host'].text(), '')
+
+    def test_pairing_token_is_generated_once_and_reused(self):
+        """令牌首次生成后持久复用；规则与 worker 的 load_identity 兼容（token_urlsafe(18)）。"""
+        with tempfile.TemporaryDirectory() as folder:
+            with patch('windows_ui.application_data_dir', return_value=Path(folder)):
+                first = read_pairing_token()
+                second = read_pairing_token()
+            self.assertEqual(first, second)
+            self.assertRegex(first, r'^[A-Za-z0-9_-]{24}$')
+            stored = json.loads((Path(folder) / 'reporter.json').read_text(encoding='utf-8'))
+            self.assertEqual(stored['pairing_token'], first)
+
+    def test_pairing_token_dialog_is_reachable(self):
+        buttons = [button.text() for button in self.window.content.findChildren(QPushButton)]
+        self.assertIn('配对令牌', buttons)
+        self.assertTrue(callable(self.window.pairing_token))
+        self.assertTrue(callable(self.window.show_pairing_token))
+
+    def test_pairing_token_dialog_builds_and_copies(self):
+        """对话框可正常构建；复制动作写入系统剪贴板。"""
+        with tempfile.TemporaryDirectory() as folder:
+            with patch('windows_ui.application_data_dir', return_value=Path(folder)):
+                token = read_pairing_token()
+                stub = MagicMock()
+
+                def fake_exec(dialog_self):
+                    for button in dialog_self.findChildren(QPushButton):
+                        if button.text() == '复制令牌':
+                            button.click()
+                            break
+                    return 0
+
+                with patch.object(QDialog, 'exec', fake_exec), \
+                     patch.object(QApplication, 'clipboard', return_value=stub):
+                    self.window.pairing_token()
+        stub.setText.assert_called_once_with(token)
 
     def test_small_work_area_keeps_bottom_controls_reachable(self):
         self.window.resize(700, 450)

@@ -10,9 +10,12 @@ import json
 import math
 import os
 from pathlib import Path
+import secrets
+import socket
 import subprocess
 import sys
 import time
+import uuid
 
 from PySide6.QtCore import Qt, QTimer, QProcess, QUrl, QLockFile
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap, QAction
@@ -104,6 +107,25 @@ def write_settings(update):
     temporary.replace(path)
 
 
+def read_pairing_token() -> str:
+    """读取（首次使用时生成）与开发板配对的令牌；生成规则与 worker 的 load_identity 一致。"""
+    path = application_data_dir() / 'reporter.json'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        data = {}
+    if data.get('pairing_token'):
+        return str(data['pairing_token'])
+    data.setdefault('reporter_id', str(uuid.uuid4()))
+    data.setdefault('computer_name', socket.gethostname())
+    data['pairing_token'] = secrets.token_urlsafe(18)
+    temporary = path.with_suffix('.tmp')
+    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+    temporary.replace(path)
+    return data['pairing_token']
+
+
 class ElidedLabel(QLabel):
     """Preserve full accessible text and tooltip while clipping long song names."""
     def paintEvent(self, event):
@@ -150,6 +172,7 @@ class ReporterWindow(QWidget):
         self.tray.setToolTip('Syna Reporter · 双击显示状态窗口')
         menu = QMenu(self)
         menu.addAction('显示状态窗口', self.reveal)
+        menu.addAction('配对令牌', self.show_pairing_token)
         menu.addAction('关于作者', self.about)
         menu.addSeparator()
         menu.addAction('退出 Syna Reporter', self.quit)
@@ -241,11 +264,12 @@ class ReporterWindow(QWidget):
         self.labels['device'].setToolTip('表示最近 15 秒收到发现请求，不代表开发板已选中本机。')
         self.toggle = self.button('正在检查…', 28, 129, self.toggle_service)
         self.toggle.setEnabled(False)
-        self.diagnostic = self.button('查看诊断', 169, 95, lambda: QDesktopServices.openUrl(QUrl('http://127.0.0.1:8765/api/v1/status')))
-        self.button('打开日志', 274, 95, self.open_logs)
-        self.button('额度来源', 379, 95, self.quota_source)
-        self.button('关于作者', 484, 95, self.about)
-        self.text(self, '等待首次更新', 589, 635, 143, 22, 11, muted=True, key='updated').setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.diagnostic = self.button('查看诊断', 167, 82, lambda: QDesktopServices.openUrl(QUrl('http://127.0.0.1:8765/api/v1/status')))
+        self.button('打开日志', 259, 82, self.open_logs)
+        self.button('额度来源', 351, 82, self.quota_source)
+        self.button('配对令牌', 443, 82, self.show_pairing_token)
+        self.button('关于作者', 535, 82, self.about)
+        self.text(self, '等待首次更新', 627, 635, 105, 22, 11, muted=True, key='updated').setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.login = QCheckBox('登录时自动启动', self.content)
         self.login.setGeometry(28, 674, 210, 26)
         self.login.clicked.connect(self.toggle_login)
@@ -280,7 +304,7 @@ class ReporterWindow(QWidget):
         else:
             note = QUOTA_SOURCE_NOTES.get(quota.get('source') or '', '')
             self.put('quota_status', title + (' · ' + note if note else ''))
-        self.put('quota', '短周期剩余 '+number(quota.get('short_remaining_percent'),'%')+'    ·    周额度剩余 '+number(quota.get('week_remaining_percent'),'%'))
+        self.put('quota', '短周期 '+number(quota.get('short_remaining_percent'),'%')+'  ·  周 '+number(quota.get('week_remaining_percent'),'%')+'  ·  月 '+number(quota.get('month_remaining_percent'),'%'))
         media = body.get('media', {})
         def clock(value):
             seconds = max(0,int(value or 0))
@@ -310,7 +334,7 @@ class ReporterWindow(QWidget):
         self.put('upload', '↑  —')
         self.put('download', '↓  —')
         self.put('agent', '等待服务启动')
-        self.put('quota', '短周期剩余 —    ·    周额度剩余 —')
+        self.put('quota', '短周期 —  ·  周 —  ·  月 —')
         self.put('quota_status', provider_title(DEFAULT_PROVIDER_ID))
         self.put('music', '等待服务启动')
         self.put('music_detail', '—')
@@ -416,8 +440,21 @@ class ReporterWindow(QWidget):
 
     def quota_source(self):
         """额度数据源设置：目录驱动，新增套餐无需改此对话框。"""
-        settings = read_settings()
-        dialog = QDialog(self)
+        dialog, combo, editors = self._build_quota_dialog(read_settings())
+        if dialog.exec() != QDialog.Accepted:
+            return
+        update = {'quota_provider': combo.currentData()}
+        for field in PROVIDER_CATALOG[combo.currentIndex()].get('fields') or ():
+            update[field['key']] = editors[field['key']].text().strip()
+        write_settings(update)
+        if self.worker and QMessageBox.question(
+                self, '重启服务', '设置已保存，立即重启服务使其生效？') == QMessageBox.Yes:
+            self.wanted = True
+            self.worker.kill()
+
+    @staticmethod
+    def _build_quota_dialog(settings):
+        dialog = QDialog()
         dialog.setWindowTitle('额度来源设置')
         layout = QVBoxLayout(dialog)
         intro = QLabel('选择开发板“额度”卡片的数据来源；切换后需重启服务生效。')
@@ -425,6 +462,7 @@ class ReporterWindow(QWidget):
         layout.addWidget(intro)
         form = QFormLayout()
         combo = QComboBox()
+        form.addRow('数据来源', combo)
         editors, rows = {}, {}
         for spec in PROVIDER_CATALOG:
             combo.addItem(spec['display'], spec['id'])
@@ -458,16 +496,48 @@ class ReporterWindow(QWidget):
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
         sync(combo.currentIndex())
-        if dialog.exec() != QDialog.Accepted:
+        return dialog, combo, editors
+
+    def show_pairing_token(self):
+        self.reveal()
+        self.pairing_token()
+
+    def pairing_token(self):
+        """显示并复制配对令牌；令牌只存本机 reporter.json，不进仓库、不外发。"""
+        try:
+            token = read_pairing_token()
+            path = application_data_dir() / 'reporter.json'
+        except OSError as error:
+            QMessageBox.warning(self, '配对令牌', f'读取令牌失败：{error}')
             return
-        update = {'quota_provider': combo.currentData()}
-        for field in PROVIDER_CATALOG[combo.currentIndex()].get('fields') or ():
-            update[field['key']] = editors[field['key']].text().strip()
-        write_settings(update)
-        if self.worker and QMessageBox.question(
-                self, '重启服务', '设置已保存，立即重启服务使其生效？') == QMessageBox.Yes:
-            self.wanted = True
-            self.worker.kill()
+        dialog = QDialog(self)
+        dialog.setWindowTitle('配对令牌')
+        layout = QVBoxLayout(dialog)
+        intro = QLabel('开发板与 Reporter 配对使用。在开发板热点配置页或局域网管理页的「配对令牌」栏填写完全相同的令牌。')
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+        token_label = QLabel(token)
+        token_label.setFont(QFont('Consolas', 13))
+        token_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        token_label.setAlignment(Qt.AlignCenter)
+        token_label.setStyleSheet('background:#f3f6f4;border:1px solid #d7e0da;border-radius:6px;padding:10px;')
+        layout.addWidget(token_label)
+        hint = QLabel(f'令牌保存在本机 {path}\n不会回显在开发板设置页，请从本窗口复制粘贴。')
+        hint.setWordWrap(True)
+        hint.setStyleSheet('color:#89958f;')
+        layout.addWidget(hint)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok)
+        buttons.accepted.connect(dialog.accept)
+        copy_button = buttons.addButton('复制令牌', QDialogButtonBox.ActionRole)
+
+        def do_copy():
+            QApplication.clipboard().setText(token)
+            copy_button.setText('已复制 ✓')
+
+        copy_button.clicked.connect(do_copy)
+        layout.addWidget(buttons)
+        dialog.exec()
+        copy_button.setText('复制令牌')
 
     def open_logs(self):
         directory = application_data_dir()

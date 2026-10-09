@@ -2,6 +2,7 @@
 #define AI_PANEL_UI_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -80,8 +81,11 @@ void ui_update_environment(float temperature_c, float humidity_percent,
 void ui_update_wifi_state(ui_wifi_state_t state);
 void ui_update_pc_connected(bool connected);
 void ui_update_agent_state(const char *state);
-void ui_update_codex_quota(int short_remaining_percent,
-                           int week_remaining_percent, bool connected, bool stale);
+void ui_update_quota_provider(const char *name);
+void ui_update_codex_quota(int short_remaining_percent, int week_remaining_percent,
+                           int month_remaining_percent, bool connected, bool stale,
+                           int32_t short_resets_at, int32_t week_resets_at,
+                           int32_t month_resets_at);
 void ui_update_media(bool available, const char *status, const char *title,
                      const char *artist, int position_seconds,
                      int duration_seconds, const char *lyric);

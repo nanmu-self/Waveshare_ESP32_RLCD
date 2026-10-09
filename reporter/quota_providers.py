@@ -7,6 +7,9 @@
   1. 在 reporter.py 实现一个 QuotaCollectorBase 子类，挂 @register_quota_provider，
      provider_name 与本目录条目的 id 一致，并实现 from_config 类方法；
   2. 在 PROVIDER_CATALOG 追加一条描述（展示名、说明、需要用户填写的字段）。
+
+字段约定：id 用于配置与 UDP 协议；display/title 用于状态窗口；
+board 用于开发板屏幕上的套餐来源展示。
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ PROVIDER_CATALOG: tuple[dict, ...] = (
         "id": "codex",
         "display": "Codex（本机 Codex 登录）",
         "title": "CODEX",
+        "board": "Codex",
         "hint": "读取本机已登录 Codex 的额度，无需额外配置。",
         "fields": (),
     },
@@ -25,6 +29,7 @@ PROVIDER_CATALOG: tuple[dict, ...] = (
         "id": "ark",
         "display": "火山方舟 Coding Plan",
         "title": "方舟",
+        "board": "火山方舟",
         "hint": "密钥获取：火山引擎控制台 → 访问控制 IAM → API 访问密钥。\n"
                 "AK/SK 只保存在本机 reporter.json，仅用于只读查询额度用量。",
         "fields": (

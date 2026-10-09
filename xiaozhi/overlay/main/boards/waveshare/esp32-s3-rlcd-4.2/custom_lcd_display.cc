@@ -154,7 +154,7 @@ void CustomLcdDisplay::SetupUI() {
     ui_init();
     ui_update_agent_state("OFFLINE");
     ui_update_api_balance("API", "--");
-    ui_update_codex_quota(-1, -1, false, false);
+    ui_update_codex_quota(-1, -1, -1, false, false, -1, -1, -1);
     ui_update_media(false, "stopped", "", "", 0, 0, "");
     ui_update_performance(0, 0, 0, false, 0, 0, false, 0, false,
                           0, 0, 0, false);
@@ -309,9 +309,14 @@ void CustomLcdDisplay::UpdateStatusBar(bool update_all) {
         const PanelReporterMetrics& metrics = reporter.metrics;
         ui_update_pc_connected(metrics.connected);
         ui_update_agent_state(metrics.connected ? metrics.agent_state : "OFFLINE");
+        ui_update_quota_provider(metrics.quota_provider_title);
         ui_update_codex_quota(metrics.codex_short_remaining,
                               metrics.codex_week_remaining,
-                              metrics.connected, metrics.codex_quota_stale);
+                              metrics.codex_month_remaining,
+                              metrics.connected, metrics.codex_quota_stale,
+                              metrics.codex_short_resets_at,
+                              metrics.codex_week_resets_at,
+                              metrics.codex_month_resets_at);
         ui_update_media(metrics.connected && metrics.media_available,
                         metrics.media_status, metrics.media_title,
                         metrics.media_artist,

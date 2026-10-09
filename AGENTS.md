@@ -106,6 +106,9 @@ powershell -ExecutionPolicy Bypass -File reporter\build_release.ps1 -Version 1.0
 - `reporter/reporter.py`：CPU 温度改用 `Get-CimInstance`（wmic 失效修复）；GPU 走 PDH GPU Engine（核显可用）；纯核显机器 GPU 温度用 CPU 温度近似。配套测试已加（`test_reporter.py`）。
 - `xiaozhi/.../ui.c` + `simulator/src/ui/ui.c`：关于页新增 STA IP 动态显示（`#ifdef ESP_PLATFORM`，模拟器占位）。**尚未编译刷板**。
 - 额度数据源可切换（本会话新增，已实测）：`reporter/quota_providers.py` 数据源目录 + `@register_quota_provider` 注册表；新增 `ArkQuotaCollector`（火山方舟 `GetCodingPlanUsage`，V4 签名纯标准库移植，Node 参考向量交叉验证，`session`→短周期、`weekly`→周额度，`monthly` 不展示；云端频控阈值未公开，实测 ~6 QPS 突发可用但长周期配额未知，轮询 300 秒 + 失败指数退避，陈旧缓存 600 秒防屏面跌--）；设置窗口新增“额度来源”对话框（目录驱动，AK/SK 存 `%LOCALAPPDATA%\AIAgentPanel\reporter.json`，保存后可一键重启 worker）；`status()` 新增 `quota_provider` 字段（仅本机 HTTP 诊断，UDP 协议不变）。真实 AK/SK 实测接口打通。未来加 OpenCode 等套餐 = 1 个收集器类 + 1 条目录描述，UI/工厂自动适配，未知 provider 回退 Codex。
+- 额度重置倒计时 + 月额度上屏（同会话续）：UDP 新增 `codex_month_remaining`/`codex_month_resets_at`；dashboard 额度区改为整体自绘的紧凑网格（每行 = 标题(5h/周/月) | 40×5px 细进度条 | 右对齐百分比(14px) | 右对齐倒计时(14px)），倒计时极简格式 `31m`/`9h`/`2d9h`（<1分 `<1m`，≥10天退化为 `12d`），未知自动隐藏；agent 状态从黑色胶囊图改为标题行内联徽标 `● 工作中`（底图标题区遮白重绘，状态资产不再引用，DONE 闪烁保留）；`ui_update_codex_quota` 8 参；check_quota_stale 宿主测试同步（三种紧凑倒计时、填充宽度基准 38）；固件全量编译通过；模拟器截图验证。
+
+- 套餐来源上屏（同会话续）：UDP 新增 `quota_provider`（id）+ `quota_provider_title`（目录 board 字段，如"火山方舟"/"Codex"，未知 provider 回退 id）；dashboard 空白区新增"套餐 | 火山方舟"键值行（左标签 + 右对齐值，右缘与网格对齐，旧 reporter 不发时板端回退 "Codex"）；双写已同步；固件全量编译通过；UDP 探测脚本端到端验证载荷。剩余：刷板实测。
 - 以上改动已在本机实测通过（Reporter 已打包验证：CPU 温度 27.9°C、核显使用率 ~10%、GPU 温度回退生效）。
 
 ### 天气页面（和风天气，本会话新增，待固件编译刷板）

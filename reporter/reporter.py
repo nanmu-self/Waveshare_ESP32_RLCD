@@ -34,7 +34,7 @@ import psutil
 from media_monitor import NeteaseMediaMonitor
 from macos_metrics import MacMetrics
 from codex_runtime import read_activity
-from quota_providers import DEFAULT_PROVIDER_ID
+from quota_providers import DEFAULT_PROVIDER_ID, provider_spec
 from platform_support import application_data_dir, disk_root, codex_executable, acquire_posix_instance
 
 
@@ -638,8 +638,10 @@ class CodexAgentMonitor:
 class QuotaSnapshot:
     short_remaining_percent: int | None = None
     week_remaining_percent: int | None = None
+    month_remaining_percent: int | None = None
     short_resets_at: int | None = None
     week_resets_at: int | None = None
+    month_resets_at: int | None = None
     updated_at: int = 0
     source: str = "unavailable"
     stale: bool = False
@@ -1065,11 +1067,14 @@ class ArkQuotaCollector(QuotaCollectorBase):
             short = next((value for level, value in usage.items()
                           if level not in {"weekly", "monthly"}), None)
         week = usage.get("weekly")
+        month = usage.get("monthly")
         return QuotaSnapshot(
             short_remaining_percent=short[0] if short else None,
             week_remaining_percent=week[0] if week else None,
+            month_remaining_percent=month[0] if month else None,
             short_resets_at=short[1] if short else None,
             week_resets_at=week[1] if week else None,
+            month_resets_at=month[1] if month else None,
             updated_at=int(time.time()),
             source="ark_api",
         )
@@ -1163,6 +1168,18 @@ class ReporterState:
             if quota.short_remaining_percent is not None else -1,
             "codex_week_remaining": quota.week_remaining_percent
             if quota.week_remaining_percent is not None else -1,
+            "codex_short_resets_at": quota.short_resets_at
+            if quota.short_resets_at is not None else -1,
+            "codex_week_resets_at": quota.week_resets_at
+            if quota.week_resets_at is not None else -1,
+            "codex_month_remaining": quota.month_remaining_percent
+            if quota.month_remaining_percent is not None else -1,
+            "codex_month_resets_at": quota.month_resets_at
+            if quota.month_resets_at is not None else -1,
+            "quota_provider": self.quota_collector.provider_name,
+            "quota_provider_title": str(
+                (provider_spec(self.quota_collector.provider_name) or {}).get("board")
+                or self.quota_collector.provider_name),
             "codex_quota_stale": quota.stale,
             "media_available": media.available,
             "media_source": media.source,
