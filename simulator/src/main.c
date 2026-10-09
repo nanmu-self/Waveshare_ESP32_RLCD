@@ -136,9 +136,7 @@ int main(void)
     ui_update_agent_state("WORKING");
     ui_update_quota_provider("火山方舟");
     ui_update_codex_quota(51, 78, 25, true, false,
-                          (int32_t)time(NULL) + 31 * 60,
-                          (int32_t)time(NULL) + (2 * 24 + 9) * 3600,
-                          (int32_t)time(NULL) + (1 * 24 + 9) * 3600);
+                          31 * 60, (2 * 24 + 9) * 3600, (1 * 24 + 9) * 3600);
     ui_update_api_balance("DeepSeek", "CNY 86.42");
     ui_weather_info_t weather_demo = {};
     weather_demo.available = true;

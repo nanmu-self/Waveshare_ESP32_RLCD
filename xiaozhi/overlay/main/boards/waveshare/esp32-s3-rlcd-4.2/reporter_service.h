@@ -26,9 +26,9 @@ struct PanelReporterMetrics {
     int16_t codex_short_remaining = -1;
     int16_t codex_week_remaining = -1;
     int16_t codex_month_remaining = -1;
-    int32_t codex_short_resets_at = -1;
-    int32_t codex_week_resets_at = -1;
-    int32_t codex_month_resets_at = -1;
+    int32_t codex_short_resets_in = -1;
+    int32_t codex_week_resets_in = -1;
+    int32_t codex_month_resets_in = -1;
     bool codex_quota_stale = false;
     char quota_provider_title[24] = "Codex";
     bool media_available = false;
@@ -81,9 +81,9 @@ private:
         int16_t codex_short_remaining = -1;
         int16_t codex_week_remaining = -1;
         int16_t codex_month_remaining = -1;
-        int32_t codex_short_resets_at = -1;
-        int32_t codex_week_resets_at = -1;
-        int32_t codex_month_resets_at = -1;
+        int32_t codex_short_resets_in = -1;
+        int32_t codex_week_resets_in = -1;
+        int32_t codex_month_resets_in = -1;
         bool codex_quota_stale = false;
         char quota_provider_title[24] = "Codex";
     };

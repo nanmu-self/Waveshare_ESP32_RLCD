@@ -1310,6 +1310,7 @@ class ReporterState:
         agent = self._agent_snapshot()
         quota = self.quota_collector.snapshot()
         media = self.media_monitor.snapshot()
+        now = int(time.time())
         return {
             "type": "AI_PANEL_REPORTER_V1",
             "version": PROTOCOL_VERSION,
@@ -1332,6 +1333,13 @@ class ReporterState:
             "codex_month_remaining": quota.month_remaining_percent
             if quota.month_remaining_percent is not None else -1,
             "codex_month_resets_at": quota.month_resets_at
+            if quota.month_resets_at is not None else -1,
+            # 剩余秒数：板子时钟基准可能与 UTC 不一致，倒计时用相对值更可靠。
+            "codex_short_resets_in": max(0, quota.short_resets_at - now)
+            if quota.short_resets_at is not None else -1,
+            "codex_week_resets_in": max(0, quota.week_resets_at - now)
+            if quota.week_resets_at is not None else -1,
+            "codex_month_resets_in": max(0, quota.month_resets_at - now)
             if quota.month_resets_at is not None else -1,
             "quota_provider": self.quota_collector.provider_name,
             "quota_provider_title": str(

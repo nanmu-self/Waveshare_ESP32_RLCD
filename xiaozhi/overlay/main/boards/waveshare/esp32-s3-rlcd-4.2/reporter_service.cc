@@ -86,8 +86,8 @@ int16_t JsonPercent(const cJSON* object, const char* name) {
     return static_cast<int16_t>(value);
 }
 
-// Unix 秒级时间戳（如额度窗口重置点）；缺失或非法返回 -1。
-int32_t JsonEpochSeconds(const cJSON* object, const char* name) {
+// 非负秒数（如额度重置剩余秒数）；缺失或非法返回 -1。
+int32_t JsonRelativeSeconds(const cJSON* object, const char* name) {
     float value = -1;
     if (!JsonFloat(object, name, value) || value < 0 || value > 4000000000.0f) {
         return -1;
@@ -331,9 +331,9 @@ void ReporterService::ParseDiscovery(const char* payload, size_t length,
     endpoint.codex_short_remaining = JsonPercent(root, "codex_short_remaining");
     endpoint.codex_week_remaining = JsonPercent(root, "codex_week_remaining");
     endpoint.codex_month_remaining = JsonPercent(root, "codex_month_remaining");
-    endpoint.codex_short_resets_at = JsonEpochSeconds(root, "codex_short_resets_at");
-    endpoint.codex_week_resets_at = JsonEpochSeconds(root, "codex_week_resets_at");
-    endpoint.codex_month_resets_at = JsonEpochSeconds(root, "codex_month_resets_at");
+    endpoint.codex_short_resets_in = JsonRelativeSeconds(root, "codex_short_resets_in");
+    endpoint.codex_week_resets_in = JsonRelativeSeconds(root, "codex_week_resets_in");
+    endpoint.codex_month_resets_in = JsonRelativeSeconds(root, "codex_month_resets_in");
     if (!JsonString(root, "quota_provider_title", endpoint.quota_provider_title,
                     sizeof(endpoint.quota_provider_title))) {
         CopyUtf8(endpoint.quota_provider_title, sizeof(endpoint.quota_provider_title), "Codex");
@@ -368,9 +368,9 @@ void ReporterService::ParseDiscovery(const char* payload, size_t length,
         metrics.codex_short_remaining = endpoint.codex_short_remaining;
         metrics.codex_week_remaining = endpoint.codex_week_remaining;
         metrics.codex_month_remaining = endpoint.codex_month_remaining;
-        metrics.codex_short_resets_at = endpoint.codex_short_resets_at;
-        metrics.codex_week_resets_at = endpoint.codex_week_resets_at;
-        metrics.codex_month_resets_at = endpoint.codex_month_resets_at;
+        metrics.codex_short_resets_in = endpoint.codex_short_resets_in;
+        metrics.codex_week_resets_in = endpoint.codex_week_resets_in;
+        metrics.codex_month_resets_in = endpoint.codex_month_resets_in;
         metrics.codex_quota_stale = endpoint.codex_quota_stale;
         CopyUtf8(metrics.quota_provider_title, sizeof(metrics.quota_provider_title),
                  endpoint.quota_provider_title);

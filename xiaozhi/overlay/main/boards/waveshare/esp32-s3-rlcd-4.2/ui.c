@@ -540,8 +540,8 @@ void ui_show_dashboard(void)
         lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
         dashboard_quota_fill[index] = fill;
         dashboard_quota_percent[index] = make_label(
-            screen, "--", &ui_font_14_regular, 88, row_y + 1);
-        lv_obj_set_width(dashboard_quota_percent[index], 44);
+            screen, "--", &ui_font_14_regular, 84, row_y + 1);
+        lv_obj_set_width(dashboard_quota_percent[index], 42);
         lv_obj_set_style_text_align(dashboard_quota_percent[index],
                                     LV_TEXT_ALIGN_RIGHT, 0);
         dashboard_quota_countdown[index] = make_label(
@@ -1567,12 +1567,13 @@ void ui_update_quota_provider(const char *name)
                       (name != NULL && name[0] != '\0') ? name : "未知");
 }
 
-// 额度重置倒计时（紧凑）：“31m” / “9h” / “2d9h”；未知为空。
-static void format_quota_countdown(char *buffer, size_t size, int32_t resets_at)
+// 额度重置倒计时（相对秒数，来自 Reporter，不依赖板子时钟基准）：
+// “31m” / “9h” / “2d9h”；未知为空。
+static void format_quota_countdown(char *buffer, size_t size, int32_t resets_in)
 {
     buffer[0] = '\0';
-    if(resets_at <= 0) return;
-    int64_t diff = (int64_t)resets_at - (int64_t)time(NULL);
+    if(resets_in <= 0) return;
+    int64_t diff = resets_in;
     if(diff < 60) {
         snprintf(buffer, size, "<1m");
         return;
@@ -1596,12 +1597,12 @@ static void format_quota_countdown(char *buffer, size_t size, int32_t resets_at)
 
 void ui_update_codex_quota(int short_remaining_percent, int week_remaining_percent,
                            int month_remaining_percent, bool connected, bool stale,
-                           int32_t short_resets_at, int32_t week_resets_at,
-                           int32_t month_resets_at)
+                           int32_t short_resets_in, int32_t week_resets_in,
+                           int32_t month_resets_in)
 {
     const int values[3] = {short_remaining_percent, week_remaining_percent,
                            month_remaining_percent};
-    const int32_t resets[3] = {short_resets_at, week_resets_at, month_resets_at};
+    const int32_t resets[3] = {short_resets_in, week_resets_in, month_resets_in};
     for(int index = 0; index < 3; ++index) {
         const bool valid = connected && values[index] >= 0 && values[index] <= 100;
         char text[8];

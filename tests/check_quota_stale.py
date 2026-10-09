@@ -32,8 +32,7 @@ int main() {
  assert(objs[3].hidden && objs[4].hidden && objs[5].hidden);
  assert(objs[12].hidden && !objs[13].hidden && objs[14].hidden);
  assert(objs[13].width == 24);
- int32_t now = (int32_t)time(nullptr);
- ui_update_codex_quota(0,100,50,true,true, now + 31*60, now + (2*24+9)*3600, now + (1*24+9)*3600);
+ ui_update_codex_quota(0,100,50,true,true, 31*60, (2*24+9)*3600, (1*24+9)*3600);
  assert(objs[6].text=="~0%" && objs[7].text=="~100%" && objs[8].text=="~50%");
  assert(objs[12].hidden && !objs[13].hidden && !objs[14].hidden);
  assert(objs[13].width == 38 && objs[14].width == 19);
@@ -58,7 +57,7 @@ def main():
     offsets = [int(x) for x in re.findall(r'\d+', re.search(r'unicode_list\[\]\s*=\s*\{(.*?)\}', font, re.S)[1])]
     advances = [int(x) / 16 for x in re.findall(r'\.adv_w=(\d+)', font)]
     width = sum(advances[offsets.index(ord(c)-32)+1] for c in '~100%')
-    assert width <= 44, f'Cached quota text exceeds label width: {width}'
+    assert width <= 42, f'Cached quota text exceeds label width: {width}'
     print('Maximum cached quota advance:', width)
     with tempfile.TemporaryDirectory(prefix='syna-quota-', ignore_cleanup_errors=True) as tmp:
         directory = Path(tmp)

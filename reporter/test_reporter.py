@@ -291,13 +291,18 @@ class DiscoveryPayloadTests(unittest.TestCase):
                 {"reporter_id": "x", "computer_name": "PC", "pairing_token": "t"},
                 reporter.MetricsCollector(), reporter.CodexAgentMonitor(),
                 StubQuotaCollector(), reporter.NeteaseMediaMonitor(), 8765)
-            payload = state.discovery("127.0.0.1")
+            with patch('reporter.time.time', return_value=1791400000):
+                payload = state.discovery("127.0.0.1")
         self.assertEqual(payload["codex_short_remaining"], 51)
         self.assertEqual(payload["codex_week_remaining"], 78)
         self.assertEqual(payload["codex_month_remaining"], 30)
         self.assertEqual(payload["codex_short_resets_at"], 1791460408)
         self.assertEqual(payload["codex_week_resets_at"], 1791734400)
         self.assertEqual(payload["codex_month_resets_at"], 1791647999)
+        # 剩余秒数（板子时钟基准不可靠，倒计时用相对值）
+        self.assertEqual(payload["codex_short_resets_in"], 60408)
+        self.assertEqual(payload["codex_week_resets_in"], 334400)
+        self.assertEqual(payload["codex_month_resets_in"], 247999)
         self.assertEqual(payload["quota_provider"], "ark")
         self.assertEqual(payload["quota_provider_title"], "火山方舟")
 

@@ -314,9 +314,9 @@ void CustomLcdDisplay::UpdateStatusBar(bool update_all) {
                               metrics.codex_week_remaining,
                               metrics.codex_month_remaining,
                               metrics.connected, metrics.codex_quota_stale,
-                              metrics.codex_short_resets_at,
-                              metrics.codex_week_resets_at,
-                              metrics.codex_month_resets_at);
+                              metrics.codex_short_resets_in,
+                              metrics.codex_week_resets_in,
+                              metrics.codex_month_resets_in);
         ui_update_media(metrics.connected && metrics.media_available,
                         metrics.media_status, metrics.media_title,
                         metrics.media_artist,
