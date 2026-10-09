@@ -1,6 +1,7 @@
 # Syna project-specific code and modifications: Copyright (c) 2026 黑沐.
 # SPDX-License-Identifier: MIT; third-party notices remain applicable.
 import io
+import json
 import os
 import tempfile
 import unittest
@@ -178,38 +179,71 @@ class ArkQuotaCollectorTests(unittest.TestCase):
 
 class OpenCodeQuotaCollectorTests(unittest.TestCase):
     _SAMPLE = {
-        'usage': {
-            'rolling': {'status': 'ok', 'percent': 2,
-                        'resetsAt': '2026-10-09T12:58:34.000Z'},
-            'weekly': {'status': 'ok', 'percent': 0,
-                       'resetsAt': '2026-10-12T00:00:00.000Z'},
-            'monthly': {'status': 'ok', 'percent': 0,
-                        'resetsAt': '2026-11-09T07:52:25.000Z'},
+        'subscriberUserId': 'user_01M2SGMGMP6VJJJPXAXXWC3DD4',
+        'product': 'go',
+        'resumability': 'renewing',
+        'cancelAtPeriodEnd': False,
+        'access': {
+            'startsAt': '2026-10-09T07:52:25.000Z',
+            'endsAt': '2026-11-09T07:52:25.000Z',
+            'cancelAtPeriodEnd': False,
+            'meters': {
+                'fiveHour': {'startsAt': '2026-10-09T07:58:34.000Z',
+                             'resetsAt': '2026-10-09T12:58:34.000Z',
+                             'limitMicroCents': '1200000000',
+                             'usedMicroCents': '31914768'},
+                'week': {'startsAt': '2026-10-05T00:00:00.000Z',
+                         'resetsAt': '2026-10-12T00:00:00.000Z',
+                         'limitMicroCents': '3000000000',
+                         'usedMicroCents': '31914768'},
+                'month': {'resetsAt': '2026-11-09T07:52:25.000Z',
+                          'limitMicroCents': '6000000000',
+                          'usedMicroCents': '31914768'},
+            },
         },
     }
 
-    def test_parse_maps_rolling_weekly_monthly_and_converts_iso(self):
+    def test_parse_maps_five_hour_week_month_and_micro_cents(self):
         snapshot = reporter.OpenCodeQuotaCollector._parse_snapshot(
-            self._SAMPLE['usage'])
+            self._SAMPLE)
         self.assertEqual(snapshot.source, 'opencode_api')
-        self.assertEqual(snapshot.short_remaining_percent, 98)
-        self.assertEqual(snapshot.week_remaining_percent, 100)
-        self.assertEqual(snapshot.month_remaining_percent, 100)
-        self.assertEqual(snapshot.short_resets_at,
-                         reporter.OpenCodeQuotaCollector._parse_iso_utc(
-                             '2026-10-09T12:58:34.000Z'))
-        self.assertEqual(snapshot.week_resets_at, 1791763200)  # 2026-10-12T00:00:00Z（东八区 08:00）
+        # 五小时窗口：已用 31.914768/1200 美分 ≈ 2.66%，剩余 97%
+        self.assertEqual(snapshot.short_remaining_percent, 97)
+        self.assertEqual(snapshot.week_remaining_percent, 99)
+        self.assertEqual(snapshot.month_remaining_percent, 99)
+        self.assertEqual(snapshot.short_resets_at, 1791550714)  # 2026-10-09T12:58:34Z
+        self.assertEqual(snapshot.week_resets_at, 1791763200)  # 2026-10-12T00:00:00Z
         self.assertIsNotNone(snapshot.month_resets_at)
 
     def test_parse_tolerates_missing_windows_and_bad_values(self):
         snapshot = reporter.OpenCodeQuotaCollector._parse_snapshot({
-            'rolling': {'status': 'ok', 'percent': 'bad'},
-            'weekly': 'junk',
+            'access': {'meters': {
+                'fiveHour': {'limitMicroCents': '100', 'usedMicroCents': 'bad'},
+                'week': {'limitMicroCents': '0', 'usedMicroCents': '0'},
+            }},
         })
         self.assertIsNone(snapshot.short_remaining_percent)
         self.assertIsNone(snapshot.week_remaining_percent)
         self.assertIsNone(snapshot.month_remaining_percent)
         self.assertIsNone(snapshot.month_resets_at)
+
+    def test_plan_summary_exposes_expiry_and_money(self):
+        plan = reporter.OpenCodeQuotaCollector._plan_summary(self._SAMPLE)
+        self.assertEqual(plan['product'], 'go')
+        self.assertEqual(plan['resumability'], 'renewing')
+        self.assertFalse(plan['cancel_at_period_end'])
+        self.assertEqual(plan['ends_at'], 1794210745)  # 2026-11-09T07:52:25Z
+        self.assertAlmostEqual(plan['windows']['fiveHour']['limit_usd'], 12.0)
+        self.assertAlmostEqual(plan['windows']['fiveHour']['used_usd'], 0.31914768)
+
+    def test_plan_info_roundtrip_via_read_snapshot(self):
+        collector = reporter.OpenCodeQuotaCollector('oc-key')
+        sample = json.dumps(self._SAMPLE).encode('utf-8')
+        response = io.BytesIO(sample)
+        with patch.object(reporter.urllib.request, 'urlopen', return_value=response):
+            snapshot = collector._read_snapshot()
+        self.assertEqual(snapshot.source, 'opencode_api')
+        self.assertEqual(collector.plan_info()['product'], 'go')
 
     def test_missing_key_reports_not_configured_without_network(self):
         snapshot = reporter.OpenCodeQuotaCollector('  ')._read_snapshot()

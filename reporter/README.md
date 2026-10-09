@@ -60,7 +60,7 @@ Reporter 优先从 Codex 本地 `logs_2.sqlite` 提取固定格式的任务开�
 - **Codex（默认）**：每 30 秒通过本机 Codex App Server 的 `account/rateLimits/read` 读取账户限额，把 `usedPercent` 换算为剩余百分比，并按 `windowDurationMins` 区分短周期额度和周额度。
 - **火山方舟 Coding Plan**：每 5 分钟调用 `GetCodingPlanUsage`（火山引擎 V4 签名，仅标准库实现；云端接口频控阈值未公开，实测短时突发可用但长周期配额未知，故采用保守轮询并指数退避），`session` 档映射短周期、`weekly` 档映射周额度，`monthly` 暂不展示。需要在本机保存访问密钥（火山引擎控制台 → 访问控制 IAM → API 访问密钥），AK/SK 只写入 `%LOCALAPPDATA%\AIAgentPanel\reporter.json`，仅用于只读查询额度；未配置时屏幕显示 `--`，密钥无效时状态窗口提示“密钥无效”。
 
-- **OpenCode Go 套餐**：每 5 分钟调用 `https://opencode.ai/zen/go/v1/usage`（Bearer Key 认证，仅标准库），`rolling` 档映射短周期、`weekly` 档映射周额度、`monthly` 档映射月额度，`resetsAt`（ISO 8601）换算为 Unix 秒；`percent` 按已用口径换算为剩余百分比（若实机验证发现口径相反，改 `_parse_snapshot` 一处即可）。Key 存本机 reporter.json；未配置/Key 无效时屏幕显示 `--` 并在状态窗口提示。
+- **OpenCode Go 套餐**：每 5 分钟调用 `https://opencode.ai/console/api/go/status`（Bearer Key 认证，仅标准库）。接口返回各窗口的 limit/used 微美分，剩余百分比按 (limit-used)/limit 现场计算；`fiveHour`→短周期、`week`→周、`month`→月（月档重置时间即套餐续费时间）；到期时间、续订状态与金额在本机诊断接口 `opencode_plan` 字段展示。Key 存本机 reporter.json；未配置/Key 无效时屏幕显示 `--` 并在状态窗口提示。
 
 数据源目录在 `quota_providers.py`（纯数据：展示名、说明、需填写的字段），收集器在 `reporter.py` 内实现并挂 `@register_quota_provider` 注册；新增套餐（如 OpenCode）只需新增一个收集器类 + 一条目录描述，UI 与工厂全部自动适配，未知 `quota_provider` 值回退到 Codex 并记录告警。
 

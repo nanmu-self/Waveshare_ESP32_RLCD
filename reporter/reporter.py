@@ -722,6 +722,10 @@ class QuotaCollectorBase:
     def _read_snapshot(self) -> QuotaSnapshot:  # pragma: no cover - 由子类实现
         raise NotImplementedError
 
+    def plan_info(self) -> dict[str, Any] | None:
+        """套餐元信息（仅订阅型数据源提供），供本机诊断接口展示。"""
+        return None
+
 
 @register_quota_provider
 class CodexQuotaCollector(QuotaCollectorBase):
@@ -1087,32 +1091,40 @@ class ArkQuotaCollector(QuotaCollectorBase):
 
 @register_quota_provider
 class OpenCodeQuotaCollector(QuotaCollectorBase):
-    """通过 OpenCode Zen Go 的只读接口查询套餐额度用量。
+    """通过 OpenCode Console 的订阅状态接口查询 Go 套餐额度。
 
-    云端接口频控阈值未公开，与方舟源同采用保守轮询（5 分钟）与
-    指数退避；resetsAt 为 ISO 8601 字符串，换算为 Unix 秒后下发。
+    接口返回各窗口的 limit/used（微美分），剩余百分比按
+    (limit-used)/limit 现场计算；resetsAt 为 ISO 8601，换算 Unix 秒后
+    下发。云端接口频控未知，与其他云源同样采用保守轮询与指数退避。
     """
 
     provider_name = "opencode"
     _POLL_SECONDS = 300
     _CACHE_SECONDS = 600
     _SUCCESS_SOURCES = frozenset({"opencode_api"})
-    _ENDPOINT = "https://opencode.ai/zen/go/v1/usage"
+    _ENDPOINT = "https://opencode.ai/console/api/go/status"
+    _METER_KEYS = (("fiveHour", "short"), ("week", "week"), ("month", "month"))
 
     def __init__(self, api_key: str = "") -> None:
         super().__init__()
         self._api_key = api_key.strip()
+        self._plan_info: dict[str, Any] | None = None
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> "QuotaCollectorBase":
         return cls(str(config.get("opencode_api_key") or ""))
+
+    def plan_info(self) -> dict[str, Any] | None:
+        """套餐元信息（产品/续订状态/到期/金额），供本机诊断接口展示。"""
+        with self._lock:
+            return dict(self._plan_info) if self._plan_info else None
 
     def _read_snapshot(self) -> QuotaSnapshot:
         if not self._api_key:
             return QuotaSnapshot(updated_at=int(time.time()),
                                  source="opencode_not_configured")
         try:
-            usage = self._request_usage()
+            payload = self._request_status()
         except OpenCodeAuthError as error:
             logging.warning("OpenCode quota rejected: %s", error)
             return QuotaSnapshot(updated_at=int(time.time()),
@@ -1120,9 +1132,12 @@ class OpenCodeQuotaCollector(QuotaCollectorBase):
         except (OSError, ValueError) as error:
             logging.warning("OpenCode quota unavailable: %s", error)
             return QuotaSnapshot(updated_at=int(time.time()), source="unavailable")
-        return self._parse_snapshot(usage)
+        snapshot = self._parse_snapshot(payload)
+        with self._lock:
+            self._plan_info = self._plan_summary(payload)
+        return snapshot
 
-    def _request_usage(self) -> dict[str, Any]:
+    def _request_status(self) -> dict[str, Any]:
         request = urllib.request.Request(
             self._ENDPOINT,
             headers={
@@ -1138,10 +1153,9 @@ class OpenCodeQuotaCollector(QuotaCollectorBase):
             if error.code in (401, 403):
                 raise OpenCodeAuthError(f"HTTP {error.code}") from error
             raise OSError(f"HTTP {error.code}: {error.reason}") from error
-        usage = payload.get("usage") if isinstance(payload, dict) else None
-        if not isinstance(usage, dict):
-            raise ValueError("OpenCode response missing usage")
-        return usage
+        if not isinstance(payload, dict) or not isinstance(payload.get("access"), dict):
+            raise ValueError("OpenCode response missing access")
+        return payload
 
     @staticmethod
     def _parse_iso_utc(value: Any) -> int | None:
@@ -1157,31 +1171,69 @@ class OpenCodeQuotaCollector(QuotaCollectorBase):
         return int(moment.timestamp())
 
     @staticmethod
-    def _parse_snapshot(usage: dict[str, Any]) -> QuotaSnapshot:
-        """rolling→短周期、weekly→周额度、monthly→月额度；percent 为已用。"""
-        windows: dict[str, tuple[int, int | None]] = {}
-        for level in ("rolling", "weekly", "monthly"):
-            item = usage.get(level)
-            if not isinstance(item, dict) or "percent" not in item:
-                continue
-            try:
-                remaining = max(0, min(100, round(100 - float(item["percent"]))))
-            except (TypeError, ValueError):
-                continue
-            windows[level] = (remaining, OpenCodeQuotaCollector._parse_iso_utc(item.get("resetsAt")))
-        short = windows.get("rolling")
-        week = windows.get("weekly")
-        month = windows.get("monthly")
+    def _meter_remaining(item: Any) -> int | None:
+        """微美分计费 → 剩余百分比；(limit-used)/limit，无法计算返回 None。"""
+        if not isinstance(item, dict):
+            return None
+        try:
+            limit = int(item.get("limitMicroCents") or 0)
+            used = int(item.get("usedMicroCents") or 0)
+        except (TypeError, ValueError):
+            return None
+        if limit <= 0:
+            return None
+        return max(0, min(100, round(100 * (limit - used) / limit)))
+
+    @classmethod
+    def _parse_snapshot(cls, payload: dict[str, Any]) -> QuotaSnapshot:
+        """fiveHour→短周期、week→周额度、month→月额度。"""
+        meters = (payload.get("access") or {}).get("meters") or {}
+        values = {slot: cls._meter_remaining(meters.get(key))
+                  for key, slot in cls._METER_KEYS}
+        resets = {slot: cls._parse_iso_utc((meters.get(key) or {}).get("resetsAt"))
+                  for key, slot in cls._METER_KEYS}
         return QuotaSnapshot(
-            short_remaining_percent=short[0] if short else None,
-            week_remaining_percent=week[0] if week else None,
-            month_remaining_percent=month[0] if month else None,
-            short_resets_at=short[1] if short else None,
-            week_resets_at=week[1] if week else None,
-            month_resets_at=month[1] if month else None,
+            short_remaining_percent=values["short"],
+            week_remaining_percent=values["week"],
+            month_remaining_percent=values["month"],
+            short_resets_at=resets["short"],
+            week_resets_at=resets["week"],
+            month_resets_at=resets["month"],
             updated_at=int(time.time()),
             source="opencode_api",
         )
+
+    @staticmethod
+    def _plan_summary(payload: dict[str, Any]) -> dict[str, Any]:
+        """提取套餐元信息与金额（微美分 → 美元），供诊断接口展示。"""
+        access = payload.get("access") or {}
+        meters = access.get("meters") or {}
+
+        def dollars(item: Any) -> float | None:
+            if not isinstance(item, dict):
+                return None
+            try:
+                return int(item.get("usedMicroCents") or 0) / 1e8
+            except (TypeError, ValueError):
+                return None
+
+        def limit_dollars(item: Any) -> float | None:
+            if not isinstance(item, dict):
+                return None
+            try:
+                return int(item.get("limitMicroCents") or 0) / 1e8
+            except (TypeError, ValueError):
+                return None
+
+        return {
+            "product": payload.get("product"),
+            "resumability": payload.get("resumability"),
+            "cancel_at_period_end": bool(payload.get("cancelAtPeriodEnd")),
+            "ends_at": OpenCodeQuotaCollector._parse_iso_utc(access.get("endsAt")),
+            "windows": {key: {"used_usd": dollars(meters.get(key)),
+                              "limit_usd": limit_dollars(meters.get(key))}
+                        for key, _ in OpenCodeQuotaCollector._METER_KEYS},
+        }
 
 
 def make_quota_collector(config: dict[str, Any] | None = None) -> QuotaCollectorBase:
@@ -1250,6 +1302,7 @@ class ReporterState:
             "agent": asdict(self._agent_snapshot()),
             "codex_quota": asdict(self.quota_collector.snapshot()),
             "quota_provider": self.quota_collector.provider_name,
+            "opencode_plan": self.quota_collector.plan_info(),
             "media": asdict(self.media_monitor.snapshot()),
         }
 
