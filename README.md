@@ -41,8 +41,8 @@ Windows 电脑端安装和保留配置刷机已由作者本机验收。macOS 有
 
 ## 作者与许可
 
-作者：黑沐。原创部分按 [MIT](LICENSE) 分发；第三方代码、字体和模型保留原许可证，见 [第三方说明](THIRD_PARTY_NOTICES.md)。
+作者：楠木（基于黑沐的希娜 Syna 二次开发）。原创部分按 [MIT](LICENSE) 分发；第三方代码、字体和模型保留原许可证，见 [第三方说明](THIRD_PARTY_NOTICES.md)。
 
-仓库：<https://github.com/heimumumu/Waveshare_ESP32_RLCD>
+仓库：<https://github.com/nanmu-self/Waveshare_ESP32_RLCD>
 
 

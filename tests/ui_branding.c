@@ -25,11 +25,11 @@ int main(int argc, char **argv){
  for(int i=0;i<400*300;i++){fputc(buffer[i*4+2],startup);fputc(buffer[i*4+1],startup);fputc(buffer[i*4],startup);}fclose(startup);
  lv_tick_inc(2100);lv_timer_handler();
  assert(lv_obj_get_child_count(lv_layer_top())==0);
- ui_toggle_page();ui_toggle_page();ui_toggle_page();
+ ui_toggle_page();ui_toggle_page();ui_toggle_page();ui_toggle_page();
  lv_obj_t*screen=lv_screen_active();int found=0;
  for(uint32_t i=0;i<lv_obj_get_child_count(screen);i++){
   lv_obj_t*c=lv_obj_get_child(screen,i);
-  if(lv_obj_check_type(c,&lv_label_class)&&strstr(lv_label_get_text(c),"黑沐"))found=1;
+  if(lv_obj_check_type(c,&lv_label_class)&&strstr(lv_label_get_text(c),"楠木"))found=1;
  }
  assert(found);lv_refr_now(d);
  FILE*f=fopen(argv[1],"wb");fprintf(f,"P6\n400 300\n255\n");
@@ -41,5 +41,5 @@ int main(int argc, char **argv){
  ui_update_performance(5,62,8,true,21,41,true,41,true,7,0,0,true);
  snapshot(d,argv[1],"dashboard");
  ui_show_performance();snapshot(d,argv[1],"performance");
- puts("Splash dismissal and fourth-page navigation passed");return 0;
+ puts("Splash dismissal and fifth-page navigation passed");return 0;
 }

@@ -71,11 +71,16 @@ def generate(name,size,height,points,fallback=None,font_path=FONT,pixel=False):
 
 latin=list(range(32,127))+[176,183]
 for size,height in [(11,14),(14,17),(18,21)]:generate(f'ui_font_{size}_regular',size,height,latin,font_path=LATIN)
+# 40 px is reserved for the weather page's hero temperature; digits only.
+generate('ui_font_40_regular',40,46,latin,font_path=LATIN)
+# Bold variant for extra hero weight on the 1-bit panel.
+BOLD=HERE/'fonts/Arimo-Bold.ttf'
+generate('ui_font_40_bold',40,46,latin,font_path=BOLD)
 # Keep the public symbol for compatibility; its Chinese glyphs are native 16px,
 # with the existing 17px line height. Do not rescale these hand-aligned pixels.
 cjk=[cp for cp in json.loads((HERE/'fonts/cjk-codepoints.json').read_text()) if cp in coverage and cp not in latin]
 assert all(cp in pixel_glyphs for cp in cjk), 'Pixel font must preserve existing CJK coverage'
 generate('ui_font_14_cjk',16,17,cjk,'ui_font_14_regular',pixel=True)
-generate('ui_font_28_brand',28,34,map(ord,'希娜 Syna · 黑沐'))
+generate('ui_font_28_brand',28,34,map(ord,'希娜 Syna · 楠木'))
 rights=sorted({r.toUnicode() for r in font_data['name'].names if r.nameID in (0,13,14)})
 # SOURCE.md is maintained with notices for all three upstream fonts.

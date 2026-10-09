@@ -16,6 +16,7 @@
 #include "reporter_service.h"
 #include "todo_service.h"
 #include "api_balance_service.h"
+#include "weather_service.h"
 #include "environment_service.h"
 #include "ui.h"
 
@@ -180,6 +181,7 @@ bool CustomLcdDisplay::ShowPanelPage(const std::string& page) {
     if (page == "dashboard") ui_show_dashboard();
     else if (page == "performance") ui_show_performance();
     else if (page == "syna") ui_show_syna();
+    else if (page == "weather") ui_show_weather();
     else if (page == "computers") ui_show_computers();
     else return false;
     return true;
@@ -342,6 +344,56 @@ void CustomLcdDisplay::UpdateStatusBar(bool update_all) {
     if (api_balance_changed) {
         ui_update_api_balance(api_balance.provider, api_balance.display);
         api_balance_generation_ = api_balance.generation;
+    }
+    PanelWeatherSnapshot weather = {};
+    const bool weather_available =
+        WeatherService::GetInstance().GetSnapshot(weather);
+    const bool weather_changed = weather_available &&
+        weather.generation != weather_generation_;
+    if (weather_changed) {
+        ui_weather_info_t info = {};
+        info.available = weather.available;
+        info.configured = weather.configured;
+        info.location_ok = weather.location_ok;
+        snprintf(info.status, sizeof(info.status), "%s", weather.status);
+        snprintf(info.city, sizeof(info.city), "%s", weather.city);
+        snprintf(info.temp, sizeof(info.temp), "%s", weather.temp);
+        snprintf(info.text, sizeof(info.text), "%s", weather.text);
+        snprintf(info.icon, sizeof(info.icon), "%s", weather.icon);
+        snprintf(info.feels_like, sizeof(info.feels_like), "%s", weather.feels_like);
+        snprintf(info.humidity, sizeof(info.humidity), "%s", weather.humidity);
+        snprintf(info.wind, sizeof(info.wind), "%s", weather.wind);
+        snprintf(info.temp_max, sizeof(info.temp_max), "%s", weather.temp_max);
+        snprintf(info.temp_min, sizeof(info.temp_min), "%s", weather.temp_min);
+        snprintf(info.aqi, sizeof(info.aqi), "%s", weather.aqi);
+        snprintf(info.aqi_category, sizeof(info.aqi_category), "%s",
+                 weather.aqi_category);
+        snprintf(info.uv_level, sizeof(info.uv_level), "%s", weather.uv_level);
+        info.wind360 = weather.wind360;
+        snprintf(info.update_time, sizeof(info.update_time), "%s",
+                 weather.update_time);
+        for (int index = 0; index < kWeatherDailyCount; ++index) {
+            snprintf(info.daily[index].date, sizeof(info.daily[index].date), "%s",
+                     weather.daily[index].date);
+            snprintf(info.daily[index].text_day,
+                     sizeof(info.daily[index].text_day), "%s",
+                     weather.daily[index].text_day);
+            snprintf(info.daily[index].icon_day,
+                     sizeof(info.daily[index].icon_day), "%s",
+                     weather.daily[index].icon_day);
+            snprintf(info.daily[index].precip,
+                     sizeof(info.daily[index].precip), "%s",
+                     weather.daily[index].precip);
+            snprintf(info.daily[index].lunar_day,
+                     sizeof(info.daily[index].lunar_day), "%s",
+                     weather.daily[index].lunar_day);
+            snprintf(info.daily[index].high, sizeof(info.daily[index].high), "%s",
+                     weather.daily[index].temp_max);
+            snprintf(info.daily[index].low, sizeof(info.daily[index].low), "%s",
+                     weather.daily[index].temp_min);
+        }
+        ui_update_weather(&info);
+        weather_generation_ = weather.generation;
     }
 }
 

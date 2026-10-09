@@ -161,7 +161,7 @@ class InstallerWindow(QMainWindow):
         self.launch.setEnabled(self.reporter_path is not None)
         self.launch.clicked.connect(self.open_reporter)
         layout.addLayout(self.row(self.backups, self.launch))
-        author = QLabel('黑沐 · B站 UID 386856267 · QQ 3091479711')
+        author = QLabel('楠木 · QQ/微信同号 157884200 · github.com/nanmu-self')
         author.setObjectName('author')
         layout.addWidget(author)
         self.setStyleSheet('''

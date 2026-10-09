@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -10,13 +11,25 @@
 #include "assets/assets.h"
 #include "ui/ui_fonts.h"
 
+#ifdef ESP_PLATFORM
+#include "esp_wifi.h"
+#include "esp_netif.h"
+#endif
+
 typedef enum {
     PAGE_DASHBOARD,
     PAGE_PERFORMANCE,
     PAGE_SYNA,
+    PAGE_WEATHER,
     PAGE_COMPUTERS,
     PAGE_ABOUT,
 } page_t;
+
+static const char *const kWeekdayNames[] = {"周日", "周一", "周二", "周三",
+                                           "周四", "周五", "周六"};
+
+/* Defined near the About page; used by the weather bottom bar too. */
+static bool station_ip_text(char *buf, size_t len);
 
 typedef struct {
     const char *name;
@@ -166,6 +179,9 @@ static bool current_battery_valid = false;
 static char current_agent_state[16] = "WORKING";
 static performance_state_t current_performance_state;
 
+/* Weather page battery label; referenced by update_battery_labels. */
+static lv_obj_t *weather_battery_label;
+
 static void style_screen(lv_obj_t *screen);
 static lv_obj_t *make_label(lv_obj_t *parent, const char *text, const lv_font_t *font,
                             int32_t x, int32_t y);
@@ -200,7 +216,7 @@ static void update_battery_labels(void)
     }
 
     lv_obj_t *labels[] = {dashboard_battery_label, performance_battery_label,
-                          syna_battery_label};
+                          syna_battery_label, weather_battery_label};
     for(size_t index = 0; index < sizeof(labels) / sizeof(labels[0]); ++index) {
         if(labels[index] != NULL && lv_obj_is_valid(labels[index]) &&
            strcmp(lv_label_get_text(labels[index]), value) != 0) {
@@ -805,6 +821,376 @@ void ui_show_syna(void)
     lv_screen_load(screen);
 }
 
+/* Weather page: cached like the other primary pages. Data arrives from
+ * WeatherService via ui_update_weather; the simulator feeds mock values.
+ * Icons are 1-bit const arrays in flash, mapped from QWeather icon codes.
+ * Wind arrows point downwind (a southwest wind blows toward northeast).
+ * Bottom bar: device IP, update time and the battery gauge. */
+static lv_obj_t *weather_screen;
+static lv_obj_t *weather_city_label;
+static lv_obj_t *weather_clock_label;
+static lv_obj_t *weather_temp_label;
+static lv_obj_t *weather_hero_icon;
+static lv_obj_t *weather_text_label;
+static lv_obj_t *weather_indoor_label;
+static lv_obj_t *weather_indoor_icon;
+static lv_obj_t *weather_feels_label;
+static lv_obj_t *weather_humidity_label;
+static lv_obj_t *weather_wind_label;
+static lv_obj_t *weather_wind_icon;
+static lv_obj_t *weather_uv_label;
+static lv_obj_t *weather_param_icons[4];
+static lv_obj_t *weather_daily_labels[UI_WEATHER_DAILY][5];
+static lv_obj_t *weather_daily_icons[UI_WEATHER_DAILY];
+static lv_obj_t *weather_daily_drops[UI_WEATHER_DAILY];
+static lv_obj_t *weather_updated_label;
+static lv_obj_t *weather_ip_label;
+static lv_obj_t *weather_wifi_image;
+static lv_obj_t *weather_battery_frame;
+static lv_obj_t *weather_battery_fill;
+static ui_weather_info_t current_weather;
+static char current_weather_icon[8] = "";
+static char current_daily_icons[UI_WEATHER_DAILY][8] = {""};
+static int current_wind360 = -1;
+
+/* Indoor readings come from the onboard environment service via
+ * ui_update_environment; the weather page shows them for comparison. */
+static bool weather_indoor_valid = false;
+static float weather_indoor_temperature_c = 0.0f;
+static float weather_indoor_humidity_percent = 0.0f;
+
+typedef enum {
+    WEATHER_KIND_SUN,
+    WEATHER_KIND_PARTLY,
+    WEATHER_KIND_CLOUDY,
+    WEATHER_KIND_RAIN,
+    WEATHER_KIND_SHOWER,
+    WEATHER_KIND_THUNDER,
+    WEATHER_KIND_SNOW,
+    WEATHER_KIND_FOG,
+    WEATHER_KIND_HAZE,
+    WEATHER_KIND_WIND,
+} weather_icon_kind_t;
+
+static weather_icon_kind_t weather_icon_kind(const char *code)
+{
+    const int value = (code != NULL && code[0] != '\0') ? atoi(code) : 0;
+    if(value == 100 || value == 150) return WEATHER_KIND_SUN;
+    if(value == 101 || value == 102 || value == 151 || value == 152) {
+        return WEATHER_KIND_PARTLY;
+    }
+    if((value >= 103 && value <= 104) || (value >= 153 && value <= 154)) {
+        return WEATHER_KIND_CLOUDY;
+    }
+    if(value == 302 || value == 303) return WEATHER_KIND_THUNDER;
+    if(value >= 300 && value < 400) return WEATHER_KIND_RAIN;
+    if(value >= 400 && value < 500) return WEATHER_KIND_SNOW;
+    if(value >= 500 && value <= 503) return WEATHER_KIND_FOG;
+    if(value > 503 && value < 520) return WEATHER_KIND_HAZE;
+    return WEATHER_KIND_WIND;
+}
+
+static const lv_image_dsc_t *const kWeatherHeroIcons[] = {
+    &ui_weather_sun, &ui_weather_partly, &ui_weather_cloudy, &ui_weather_rain,
+    &ui_weather_shower, &ui_weather_thunder, &ui_weather_snow, &ui_weather_fog,
+    &ui_weather_haze, &ui_weather_wind,
+};
+
+static const lv_image_dsc_t *const kWeatherSmallIcons[] = {
+    &ui_weather16_sun, &ui_weather16_partly, &ui_weather16_cloudy,
+    &ui_weather16_rain, &ui_weather16_shower, &ui_weather16_thunder,
+    &ui_weather16_snow, &ui_weather16_fog, &ui_weather16_haze,
+    &ui_weather16_wind,
+};
+
+static const lv_image_dsc_t *weather_hero_icon_for(const char *code)
+{
+    return kWeatherHeroIcons[weather_icon_kind(code)];
+}
+
+static const lv_image_dsc_t *weather_small_icon_for(const char *code)
+{
+    return kWeatherSmallIcons[weather_icon_kind(code)];
+}
+
+/* 风从 wind360 吹来，箭头指向下风向（wind360 + 180），八方位取整。 */
+static const lv_image_dsc_t *weather_wind_icon_for(int wind360)
+{
+    static const lv_image_dsc_t *const kArrows[8] = {
+        &ui_weather_wind_n, &ui_weather_wind_ne, &ui_weather_wind_e,
+        &ui_weather_wind_se, &ui_weather_wind_s, &ui_weather_wind_sw,
+        &ui_weather_wind_w, &ui_weather_wind_nw,
+    };
+    if(wind360 < 0 || wind360 >= 360) return &ui_weather_wind;
+    const int downwind = (wind360 + 180) % 360;
+    return kArrows[((downwind + 22) / 45) % 8];
+}
+
+static void set_label_text(lv_obj_t *label, const char *text)
+{
+    if(label == NULL || !lv_obj_is_valid(label)) return;
+    /* Skip invalidation on the monochrome panel when unchanged. */
+    if(strcmp(lv_label_get_text(label), text) != 0) lv_label_set_text(label, text);
+}
+
+static void set_image_src(lv_obj_t *image, const lv_image_dsc_t *source)
+{
+    if(image == NULL || !lv_obj_is_valid(image)) return;
+    if(lv_image_get_src(image) != source) lv_image_set_src(image, source);
+}
+
+static void refresh_weather_page(void)
+{
+    char line[64];
+    if(current_weather.aqi_category[0] != '\0' &&
+       strcmp(current_weather.aqi, "--") != 0) {
+        snprintf(line, sizeof(line), "%s [%s] %s", current_weather.city,
+                 current_weather.aqi_category, current_weather.aqi);
+    } else {
+        snprintf(line, sizeof(line), "%s", current_weather.city);
+    }
+    set_label_text(weather_city_label, line);
+    set_label_text(weather_temp_label, current_weather.temp);
+    /* 错误状态优先显示在现象位置（hero 卡片）。 */
+    set_label_text(weather_text_label,
+                   current_weather.status[0] ? current_weather.status
+                                             : current_weather.text);
+    if(strcmp(current_weather_icon, current_weather.icon) != 0) {
+        snprintf(current_weather_icon, sizeof(current_weather_icon), "%s",
+                 current_weather.icon);
+        set_image_src(weather_hero_icon, weather_hero_icon_for(current_weather_icon));
+    }
+    if(weather_indoor_valid) {
+        snprintf(line, sizeof(line), "室内 %.0f°C %.0f%%",
+                 weather_indoor_temperature_c, weather_indoor_humidity_percent);
+    } else {
+        snprintf(line, sizeof(line), "室内 --");
+    }
+    set_label_text(weather_indoor_label, line);
+    snprintf(line, sizeof(line), "体感 %s", current_weather.feels_like);
+    set_label_text(weather_feels_label, line);
+    snprintf(line, sizeof(line), "湿度 %s", current_weather.humidity);
+    set_label_text(weather_humidity_label, line);
+    set_label_text(weather_wind_label, current_weather.wind);
+    if(current_wind360 != current_weather.wind360) {
+        current_wind360 = current_weather.wind360;
+        set_image_src(weather_wind_icon, weather_wind_icon_for(current_wind360));
+    }
+    snprintf(line, sizeof(line), "紫外线 %s", current_weather.uv_level);
+    set_label_text(weather_uv_label, line);
+    static const char *const day_names[UI_WEATHER_DAILY] = {
+        "今天", "明天", "后天"};
+    for(int index = 0; index < UI_WEATHER_DAILY; ++index) {
+        const ui_weather_day_t *day = &current_weather.daily[index];
+        set_label_text(weather_daily_labels[index][0], day_names[index]);
+        set_label_text(weather_daily_labels[index][1], day->text_day);
+        snprintf(line, sizeof(line), "%s/%s", day->high, day->low);
+        set_label_text(weather_daily_labels[index][2], line);
+        set_label_text(weather_daily_labels[index][3], day->precip);
+        set_label_text(weather_daily_labels[index][4], day->lunar_day);
+        if(strcmp(current_daily_icons[index], day->icon_day) != 0) {
+            snprintf(current_daily_icons[index], sizeof(current_daily_icons[index]),
+                     "%s", day->icon_day);
+            set_image_src(weather_daily_icons[index],
+                          weather_small_icon_for(current_daily_icons[index]));
+        }
+    }
+    snprintf(line, sizeof(line), "%s 更新", current_weather.update_time);
+    set_label_text(weather_updated_label, line);
+    char ip[16];
+    snprintf(line, sizeof(line), "%s",
+             station_ip_text(ip, sizeof(ip)) ? ip : "--");
+    set_label_text(weather_ip_label, line);
+    set_image_src(weather_wifi_image,
+                  current_wifi_state == UI_WIFI_CONNECTED ? &ui_weather_wifi
+                                                          : &ui_weather_wifi_off);
+    /* 图形电池：填充宽度按百分比。 */
+    if(weather_battery_fill != NULL && lv_obj_is_valid(weather_battery_fill)) {
+        int percent = current_battery_percent;
+        if(!current_battery_valid || percent < 0) percent = 0;
+        if(percent > 100) percent = 100;
+        const int width = (20 * percent) / 100;
+        if(lv_obj_get_width(weather_battery_fill) != width) {
+            lv_obj_set_width(weather_battery_fill, width);
+            if(percent > 0) lv_obj_remove_flag(weather_battery_fill, LV_OBJ_FLAG_HIDDEN);
+            else lv_obj_add_flag(weather_battery_fill, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
+void ui_show_weather(void)
+{
+    current_page = PAGE_WEATHER;
+    sync_assistant_visibility();
+    if(weather_screen != NULL) {
+        clock_label = weather_clock_label;
+        refresh_weather_page();
+        lv_screen_load(weather_screen);
+        ui_update_clock();
+        return;
+    }
+
+    lv_obj_t *screen = lv_obj_create(NULL);
+    weather_screen = screen;
+    style_screen(screen);
+
+    /* 顶栏：城市 + AQI 左，星期时钟右。 */
+    weather_city_label = make_label(screen, "--", &ui_font_14_cjk, 18, 12);
+    lv_obj_set_size(weather_city_label, 226, 20);
+    lv_label_set_long_mode(weather_city_label, LV_LABEL_LONG_CLIP);
+
+    weather_clock_label = make_label(screen, "--:--", &ui_font_14_cjk, 254, 12);
+    lv_obj_set_size(weather_clock_label, 128, 20);
+    lv_label_set_long_mode(weather_clock_label, LV_LABEL_LONG_CLIP);
+    lv_obj_set_style_text_align(weather_clock_label, LV_TEXT_ALIGN_RIGHT, 0);
+    clock_label = weather_clock_label;
+
+    /* 温度卡：40px 加粗温度 + 32px 天气图标 + 现象/状态 + 室内对比。 */
+    lv_obj_t *hero = make_panel(screen, 16, 42, 172, 124);
+    weather_temp_label = make_label(hero, "--", &ui_font_40_bold, 10, 6);
+    lv_obj_set_size(weather_temp_label, 108, 46);
+    lv_label_set_long_mode(weather_temp_label, LV_LABEL_LONG_CLIP);
+    weather_hero_icon = lv_image_create(hero);
+    lv_image_set_src(weather_hero_icon, &ui_weather_sun);
+    lv_obj_set_pos(weather_hero_icon, 126, 8);
+    weather_text_label = make_label(hero, "--", &ui_font_14_cjk, 10, 60);
+    weather_indoor_icon = lv_image_create(hero);
+    lv_image_set_src(weather_indoor_icon, &ui_weather_home);
+    lv_obj_set_pos(weather_indoor_icon, 10, 92);
+    weather_indoor_label = make_label(hero, "室内 --", &ui_font_14_cjk, 36, 94);
+
+    /* 详情卡：体感/湿度/风/紫外线，四行带参数图标。 */
+    lv_obj_t *detail = make_panel(screen, 204, 42, 180, 124);
+    const lv_image_dsc_t *param_icons[] = {
+        &ui_weather_thermometer, &ui_weather_drop, NULL, &ui_weather_uv};
+    const int detail_y[] = {10, 41, 72, 103};
+    for(int index = 0; index < 4; ++index) {
+        if(param_icons[index] == NULL) continue;  /* 风行由风向箭头占位 */
+        weather_param_icons[index] = lv_image_create(detail);
+        lv_image_set_src(weather_param_icons[index], param_icons[index]);
+        lv_obj_set_pos(weather_param_icons[index], 10, detail_y[index] - 1);
+    }
+    weather_wind_icon = lv_image_create(detail);
+    lv_image_set_src(weather_wind_icon, &ui_weather_wind);
+    lv_obj_set_pos(weather_wind_icon, 10, detail_y[2] - 1);
+    weather_feels_label =
+        make_label(detail, "--", &ui_font_14_cjk, 36, detail_y[0]);
+    weather_humidity_label =
+        make_label(detail, "--", &ui_font_14_cjk, 36, detail_y[1]);
+    weather_wind_label =
+        make_label(detail, "--", &ui_font_14_cjk, 36, detail_y[2]);
+    weather_uv_label =
+        make_label(detail, "--", &ui_font_14_cjk, 36, detail_y[3]);
+
+    /* 预报卡：日期、现象、高低温、降水量与农历。 */
+    lv_obj_t *forecast = make_panel(screen, 16, 176, 368, 86);
+    for(int index = 0; index < UI_WEATHER_DAILY; ++index) {
+        const int row_y = 9 + index * 27;
+        weather_daily_icons[index] = lv_image_create(forecast);
+        lv_image_set_src(weather_daily_icons[index], &ui_weather16_sun);
+        lv_obj_set_pos(weather_daily_icons[index], 14, row_y);
+        weather_daily_labels[index][0] =
+            make_label(forecast, "--", &ui_font_14_cjk, 34, row_y);
+        lv_obj_set_size(weather_daily_labels[index][0], 78, 20);
+        lv_label_set_long_mode(weather_daily_labels[index][0], LV_LABEL_LONG_CLIP);
+        weather_daily_labels[index][1] =
+            make_label(forecast, "--", &ui_font_14_cjk, 114, row_y);
+        lv_obj_set_size(weather_daily_labels[index][1], 58, 20);
+        lv_label_set_long_mode(weather_daily_labels[index][1], LV_LABEL_LONG_CLIP);
+        weather_daily_labels[index][2] =
+            make_label(forecast, "--", &ui_font_14_cjk, 174, row_y);
+        lv_obj_set_size(weather_daily_labels[index][2], 64, 20);
+        lv_label_set_long_mode(weather_daily_labels[index][2], LV_LABEL_LONG_CLIP);
+        weather_daily_drops[index] = lv_image_create(forecast);
+        lv_image_set_src(weather_daily_drops[index], &ui_weather12_drop);
+        lv_obj_set_pos(weather_daily_drops[index], 244, row_y + 3);
+        weather_daily_labels[index][3] =
+            make_label(forecast, "--", &ui_font_11_regular, 258, row_y + 1);
+        lv_obj_set_size(weather_daily_labels[index][3], 26, 16);
+        lv_label_set_long_mode(weather_daily_labels[index][3], LV_LABEL_LONG_CLIP);
+        weather_daily_labels[index][4] =
+            make_label(forecast, "--", &ui_font_14_cjk, 288, row_y);
+        lv_obj_set_size(weather_daily_labels[index][4], 66, 20);
+        lv_label_set_long_mode(weather_daily_labels[index][4], LV_LABEL_LONG_CLIP);
+        lv_obj_set_style_text_align(weather_daily_labels[index][4],
+                                    LV_TEXT_ALIGN_RIGHT, 0);
+    }
+
+    /* 底栏：设备 IP、更新时间、图形电池与百分比。 */
+    weather_ip_label = make_label(screen, "--", &ui_font_11_regular, 22, 267);
+    lv_obj_set_size(weather_ip_label, 104, 16);
+    lv_label_set_long_mode(weather_ip_label, LV_LABEL_LONG_CLIP);
+    weather_updated_label = make_label(screen, "-- 更新", &ui_font_14_cjk, 132, 266);
+    lv_obj_set_size(weather_updated_label, 100, 18);
+    lv_label_set_long_mode(weather_updated_label, LV_LABEL_LONG_CLIP);
+    weather_battery_frame = make_panel(screen, 300, 266, 26, 14);
+    lv_obj_set_style_radius(weather_battery_frame, 2, 0);
+    weather_battery_fill = lv_obj_create(weather_battery_frame);
+    lv_obj_remove_flag(weather_battery_fill, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_pos(weather_battery_fill, 2, 2);
+    lv_obj_set_size(weather_battery_fill, 0, 6);
+    lv_obj_set_style_radius(weather_battery_fill, 0, 0);
+    lv_obj_set_style_border_width(weather_battery_fill, 0, 0);
+    lv_obj_set_style_pad_all(weather_battery_fill, 0, 0);
+    lv_obj_set_style_bg_color(weather_battery_fill, COLOR_BLACK, 0);
+    lv_obj_set_style_bg_opa(weather_battery_fill, LV_OPA_COVER, 0);
+    lv_obj_t *battery_cap = lv_obj_create(screen);
+    lv_obj_remove_flag(battery_cap, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_pos(battery_cap, 327, 270);
+    lv_obj_set_size(battery_cap, 3, 6);
+    lv_obj_set_style_radius(battery_cap, 0, 0);
+    lv_obj_set_style_border_width(battery_cap, 0, 0);
+    lv_obj_set_style_pad_all(battery_cap, 0, 0);
+    lv_obj_set_style_bg_color(battery_cap, COLOR_BLACK, 0);
+    lv_obj_set_style_bg_opa(battery_cap, LV_OPA_COVER, 0);
+    make_white_mask(screen, 334, 266, 28, 16);
+    weather_battery_label = make_value_label(screen, &ui_font_11_regular,
+                                             334, 266, 28, 16);
+
+    refresh_weather_page();
+    update_battery_labels();
+    ui_update_clock();
+    lv_screen_load(screen);
+}
+
+void ui_update_weather(const ui_weather_info_t *info)
+{
+    if(info == NULL) return;
+    current_weather = *info;
+    /* Defensive termination, mirroring ui_update_todos. */
+    current_weather.city[sizeof(current_weather.city) - 1] = '\0';
+    current_weather.temp[sizeof(current_weather.temp) - 1] = '\0';
+    current_weather.text[sizeof(current_weather.text) - 1] = '\0';
+    current_weather.icon[sizeof(current_weather.icon) - 1] = '\0';
+    current_weather.feels_like[sizeof(current_weather.feels_like) - 1] = '\0';
+    current_weather.humidity[sizeof(current_weather.humidity) - 1] = '\0';
+    current_weather.wind[sizeof(current_weather.wind) - 1] = '\0';
+    current_weather.temp_max[sizeof(current_weather.temp_max) - 1] = '\0';
+    current_weather.temp_min[sizeof(current_weather.temp_min) - 1] = '\0';
+    current_weather.aqi[sizeof(current_weather.aqi) - 1] = '\0';
+    current_weather.aqi_category[sizeof(current_weather.aqi_category) - 1] = '\0';
+    current_weather.uv_level[sizeof(current_weather.uv_level) - 1] = '\0';
+    current_weather.update_time[sizeof(current_weather.update_time) - 1] = '\0';
+    current_weather.status[sizeof(current_weather.status) - 1] = '\0';
+    for(int index = 0; index < UI_WEATHER_DAILY; ++index) {
+        current_weather.daily[index].date[
+            sizeof(current_weather.daily[index].date) - 1] = '\0';
+        current_weather.daily[index].text_day[
+            sizeof(current_weather.daily[index].text_day) - 1] = '\0';
+        current_weather.daily[index].icon_day[
+            sizeof(current_weather.daily[index].icon_day) - 1] = '\0';
+        current_weather.daily[index].precip[
+            sizeof(current_weather.daily[index].precip) - 1] = '\0';
+        current_weather.daily[index].lunar_day[
+            sizeof(current_weather.daily[index].lunar_day) - 1] = '\0';
+        current_weather.daily[index].high[
+            sizeof(current_weather.daily[index].high) - 1] = '\0';
+        current_weather.daily[index].low[
+            sizeof(current_weather.daily[index].low) - 1] = '\0';
+    }
+    if(current_page == PAGE_WEATHER) refresh_weather_page();
+}
+
 void ui_show_computers(void)
 {
     current_page = PAGE_COMPUTERS;
@@ -861,6 +1247,49 @@ void ui_show_computers(void)
     lv_screen_load(screen);
 }
 
+/* The STA IP is read straight from esp-netif, mirroring
+ * ApiBalanceService::WifiReady(). Returns false when WiFi is down. */
+#ifdef ESP_PLATFORM
+static bool station_ip_text(char *buf, size_t len)
+{
+    wifi_ap_record_t ap_info = {0};
+    if(esp_wifi_sta_get_ap_info(&ap_info) != ESP_OK) return false;
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    esp_netif_ip_info_t ip_info = {0};
+    if(netif == NULL || esp_netif_get_ip_info(netif, &ip_info) != ESP_OK ||
+       ip_info.ip.addr == 0) return false;
+    snprintf(buf, len, IPSTR, IP2STR(&ip_info.ip));
+    return true;
+}
+#else
+/* Host simulator has no esp-netif; show a mock IP when provided. */
+static bool station_ip_text(char *buf, size_t len)
+{
+    const char *mock_ip = getenv("AI_PANEL_MOCK_IP");
+    if(mock_ip == NULL || mock_ip[0] == ' ') return false;
+    snprintf(buf, len, "%s", mock_ip);
+    return true;
+}
+#endif
+
+static lv_obj_t *about_ip_label;
+
+static void refresh_about_ip(void)
+{
+    if(about_ip_label == NULL || !lv_obj_is_valid(about_ip_label)) return;
+    char ip[16];
+    char text[64];
+    if(station_ip_text(ip, sizeof(ip))) {
+        snprintf(text, sizeof(text), "IP 地址：%s（管理页 :8080）", ip);
+    } else {
+        snprintf(text, sizeof(text), "IP 地址：未连接");
+    }
+    /* Skip invalidation on the monochrome panel when unchanged. */
+    if(strcmp(lv_label_get_text(about_ip_label), text) != 0) {
+        lv_label_set_text(about_ip_label, text);
+    }
+}
+
 /* This page is cached like the other primary pages. */
 static lv_obj_t *about_screen;
 static void ui_show_about(void)
@@ -869,16 +1298,20 @@ static void ui_show_about(void)
     if(about_screen == NULL) {
         about_screen = lv_obj_create(NULL);
         style_screen(about_screen);
-        make_label(about_screen, "希娜 Syna  v1.0.0", &ui_font_14_cjk, 18, 18);
-        make_label(about_screen, "关于作者：黑沐", &ui_font_14_cjk, 18, 54);
-        make_label(about_screen, "B站 UID: 386856267", &ui_font_14_cjk, 18, 85);
-        make_label(about_screen, "QQ: 3091479711", &ui_font_14_cjk, 18, 112);
-        make_label(about_screen, "github.com/heimumumu/", &ui_font_14_cjk, 18, 147);
-        make_label(about_screen, "Waveshare_ESP32_RLCD", &ui_font_14_cjk, 18, 171);
-        make_label(about_screen, "发布版本：仓库 Releases 页面", &ui_font_14_cjk, 18, 201);
-        make_label(about_screen, "原创部分 MIT - 保留版权声明", &ui_font_14_cjk, 18, 233);
-        make_label(about_screen, "感谢小智、LVGL及第三方贡献者", &ui_font_14_cjk, 18, 264);
+        make_label(about_screen, "希娜 Syna  v1.0.0", &ui_font_14_cjk, 18, 16);
+        make_label(about_screen, "关于作者：楠木", &ui_font_14_cjk, 18, 46);
+        make_label(about_screen, "QQ/微信：157884200", &ui_font_14_cjk, 18, 70);
+        make_label(about_screen, "github.com/nanmu-self", &ui_font_14_cjk, 18, 94);
+        make_label(about_screen, "Waveshare_ESP32_RLCD", &ui_font_14_cjk, 18, 118);
+        make_label(about_screen, "发布版本：仓库 Releases 页面", &ui_font_14_cjk, 18, 139);
+        make_label(about_screen, "原创部分 MIT - 保留版权声明", &ui_font_14_cjk, 18, 163);
+        make_label(about_screen, "基于 xiaozhi-esp32 二次开发", &ui_font_14_cjk, 18, 188);
+        make_label(about_screen, "感谢小智、黑沐、LVGL及开源贡献者", &ui_font_14_cjk, 18, 213);
+        about_ip_label = make_label(about_screen, "IP 地址：未连接",
+                                    &ui_font_14_cjk, 18, 250);
+        make_label(about_screen, "天气数据：和风天气", &ui_font_14_cjk, 18, 274);
     }
+    refresh_about_ip();
     lv_screen_load(about_screen);
 }
 
@@ -895,7 +1328,7 @@ static void show_startup_signature(void)
     lv_obj_set_size(panel, 400, 300);
     lv_obj_set_pos(panel, 0, 0);
     style_screen(panel);
-    lv_obj_t *title = make_label(panel, "希娜 Syna · 黑沐", &ui_font_28_brand, 0, 106);
+    lv_obj_t *title = make_label(panel, "希娜 Syna · 楠木", &ui_font_28_brand, 0, 106);
     lv_obj_set_width(title, 400);
     lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_t *version = make_label(panel, "v1.0.0", &ui_font_18_regular, 0, 157);
@@ -908,7 +1341,8 @@ void ui_toggle_page(void)
 {
     if(current_page == PAGE_DASHBOARD) ui_show_performance();
     else if(current_page == PAGE_PERFORMANCE) ui_show_syna();
-    else if(current_page == PAGE_SYNA) ui_show_about();
+    else if(current_page == PAGE_SYNA) ui_show_weather();
+    else if(current_page == PAGE_WEATHER) ui_show_about();
     else ui_show_dashboard();
 }
 
@@ -998,14 +1432,22 @@ void ui_cycle_mock_status(void)
 
 void ui_update_clock(void)
 {
+    /* Keep the About page IP line fresh while the page is on screen. */
+    if(current_page == PAGE_ABOUT) refresh_about_ip();
+
     if(clock_label == NULL || !lv_obj_is_valid(clock_label)) return;
 
     time_t now = time(NULL);
     struct tm *local = localtime(&now);
     if(local == NULL) return;
 
-    char time_text[8];
-    strftime(time_text, sizeof(time_text), "%H:%M", local);
+    char time_text[24];
+    if(current_page == PAGE_WEATHER) {
+        snprintf(time_text, sizeof(time_text), "%s %02d:%02d",
+                 kWeekdayNames[local->tm_wday], local->tm_hour, local->tm_min);
+    } else {
+        strftime(time_text, sizeof(time_text), "%H:%M", local);
+    }
     /* The screen only shows hours and minutes. Avoid invalidating a full-screen
      * monochrome render once per second when the visible text did not change. */
     if(strcmp(lv_label_get_text(clock_label), time_text) != 0) {
@@ -1019,6 +1461,10 @@ void ui_update_environment(float temperature_c, float humidity_percent,
 {
     current_battery_percent = battery_percent;
     current_battery_valid = battery_valid;
+    weather_indoor_valid = environment_valid;
+    weather_indoor_temperature_c = temperature_c;
+    weather_indoor_humidity_percent = humidity_percent;
+    if(current_page == PAGE_WEATHER) refresh_weather_page();
     if(dashboard_temperature_label != NULL &&
        lv_obj_is_valid(dashboard_temperature_label)) {
         char value[12];

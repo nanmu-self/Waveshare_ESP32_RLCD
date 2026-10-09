@@ -44,6 +44,45 @@ add_executable(ai_panel_simulator
     src/assets/ui_font_11_regular.c
     src/assets/ui_font_14_regular.c
     src/assets/ui_font_14_cjk.c
+    src/assets/ui_font_28_brand.c
+    src/assets/ui_font_40_regular.c
+    src/assets/ui_font_40_bold.c
+    src/assets/ui_weather_sun.c
+    src/assets/ui_weather_partly.c
+    src/assets/ui_weather_cloudy.c
+    src/assets/ui_weather_rain.c
+    src/assets/ui_weather_shower.c
+    src/assets/ui_weather_thunder.c
+    src/assets/ui_weather_snow.c
+    src/assets/ui_weather_fog.c
+    src/assets/ui_weather_haze.c
+    src/assets/ui_weather_wind.c
+    src/assets/ui_weather_thermometer.c
+    src/assets/ui_weather_drop.c
+    src/assets/ui_weather_compass.c
+    src/assets/ui_weather_home.c
+    src/assets/ui_weather16_sun.c
+    src/assets/ui_weather16_partly.c
+    src/assets/ui_weather16_cloudy.c
+    src/assets/ui_weather16_rain.c
+    src/assets/ui_weather16_shower.c
+    src/assets/ui_weather16_thunder.c
+    src/assets/ui_weather16_snow.c
+    src/assets/ui_weather16_fog.c
+    src/assets/ui_weather16_haze.c
+    src/assets/ui_weather16_wind.c
+    src/assets/ui_weather_wind_n.c
+    src/assets/ui_weather_wind_ne.c
+    src/assets/ui_weather_wind_e.c
+    src/assets/ui_weather_wind_se.c
+    src/assets/ui_weather_wind_s.c
+    src/assets/ui_weather_wind_sw.c
+    src/assets/ui_weather_wind_w.c
+    src/assets/ui_weather_wind_nw.c
+    src/assets/ui_weather_wifi.c
+    src/assets/ui_weather_wifi_off.c
+    src/assets/ui_weather_uv.c
+    src/assets/ui_weather12_drop.c
 )
 
 target_include_directories(ai_panel_simulator PRIVATE src)

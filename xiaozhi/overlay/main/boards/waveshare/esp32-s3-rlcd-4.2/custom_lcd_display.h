@@ -37,6 +37,7 @@ private:
 	uint32_t            reporter_generation_ = 0;
 	uint32_t            todo_generation_ = 0;
 	uint32_t            api_balance_generation_ = 0;
+	uint32_t            weather_generation_ = 0;
 	uint16_t (*PixelIndexLUT)[300];
 	uint8_t  (*PixelBitLUT  )[300];
 	void InitPortraitLUT();

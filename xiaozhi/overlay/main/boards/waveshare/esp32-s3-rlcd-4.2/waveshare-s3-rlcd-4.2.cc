@@ -20,6 +20,7 @@
 #include "reporter_service.h"
 #include "todo_service.h"
 #include "api_balance_service.h"
+#include "weather_service.h"
 #include "settings_portal_service.h"
 #include "environment_service.h"
 #include "lvgl.h"
@@ -161,7 +162,7 @@ private:
         });
         mcp_server.AddTool(
             "self.panel.show_page",
-            "切换状态屏页面。page 使用 dashboard（主页）、performance（电脑性能）、syna（Syna-sama 对话和待办）或 computers（电脑选择）。",
+            "切换状态屏页面。page 使用 dashboard（主页）、performance（电脑性能）、syna（Syna-sama 对话和待办）、weather（天气）或 computers（电脑选择）。",
             PropertyList({Property("page", kPropertyTypeString)}),
             [this](const PropertyList& properties) -> ReturnValue {
                 const std::string requested =
@@ -173,10 +174,12 @@ private:
                          requested == "性能页") page = "performance";
                 else if (requested == "syna" || requested == "syna-sama" ||
                          requested == "对话" || requested == "待办") page = "syna";
+                else if (requested == "weather" || requested == "天气" ||
+                         requested == "天气页") page = "weather";
                 else if (requested == "computers" || requested == "computer" ||
                          requested == "电脑" || requested == "电脑列表") page = "computers";
                 else throw std::runtime_error(
-                    "Unknown page; use dashboard, performance, syna or computers");
+                    "Unknown page; use dashboard, performance, syna, weather or computers");
 
                 Application::GetInstance().Schedule([this, page]() {
                     display_->ShowPanelPage(page);
@@ -318,11 +321,16 @@ public:
         InitializeButtons();     
         InitializeTools();
         InitializeLcdDisplay();
+        // 设备拿到 STA IP 后自动开启局域网管理页（http://板子IP:8080，需管理密码）
+        SettingsPortalService::GetInstance().Start();
         if (!ReporterService::GetInstance().Start()) {
             ESP_LOGE(TAG, "Failed to start Reporter service");
         }
         if (!ApiBalanceService::GetInstance().Start()) {
             ESP_LOGE(TAG, "Failed to start API balance service");
+        }
+        if (!WeatherService::GetInstance().Start()) {
+            ESP_LOGE(TAG, "Failed to start weather service");
         }
    }
 

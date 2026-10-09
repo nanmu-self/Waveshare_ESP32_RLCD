@@ -18,6 +18,22 @@ This Font Software is licensed under the SIL Open Font License, Version 1.1. Thi
 
 https://openfontlicense.org
 
+## Arimo-Bold.ttf
+
+用途：40 px 天气页温度大字（Bold 字重）
+
+来源：https://github.com/googlefonts/Arimo
+
+许可证：Arimo-OFL.txt
+
+SHA-256：d7a8b187cf8444d4cfee102e8eae9e3043682fd5106d5d33ed677fe268a0e2ba
+
+Copyright 2020 The Arimo Project Authors (https://github.com/googlefonts/arimo)
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1. This license is available with a FAQ at: https://openfontlicense.org
+
+https://openfontlicense.org
+
 ## unifont-16.0.04.hex.gz
 
 用途：原生 16 px 中文点阵（兼容符号 ui_font_14_cjk），不缩放

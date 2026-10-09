@@ -20,6 +20,7 @@ enum {
     COMMAND_CYCLE_STATE = 1U << 6,
     COMMAND_PERFORMANCE = 1U << 7,
     COMMAND_SYNA = 1U << 8,
+    COMMAND_WEATHER = 1U << 9,
 };
 
 static volatile uint32_t pending_commands;
@@ -68,6 +69,9 @@ static int watch_sdl_events(void *userdata, SDL_Event *event)
         case SDLK_s:
             pending_commands |= COMMAND_SYNA;
             break;
+        case SDLK_w:
+            pending_commands |= COMMAND_WEATHER;
+            break;
         case SDLK_DOWN:
         case SDLK_TAB:
             pending_commands |= COMMAND_SELECT_NEXT;
@@ -100,6 +104,7 @@ static void process_pending_commands(void)
     if(commands & COMMAND_SHOW_COMPUTERS) ui_show_computers();
     if(commands & COMMAND_PERFORMANCE) ui_show_performance();
     if(commands & COMMAND_SYNA) ui_show_syna();
+    if(commands & COMMAND_WEATHER) ui_show_weather();
     if(commands & COMMAND_TOGGLE_PAGE) ui_toggle_page();
     if(commands & COMMAND_SELECT_NEXT) ui_select_computer(1);
     if(commands & COMMAND_SELECT_PREVIOUS) ui_select_computer(-1);
@@ -129,6 +134,46 @@ int main(void)
                           2.4f, 18.7f, true);
     ui_update_codex_quota(100, 91, true);
     ui_update_api_balance("DeepSeek", "CNY 86.42");
+    ui_weather_info_t weather_demo = {};
+    weather_demo.available = true;
+    weather_demo.configured = true;
+    weather_demo.location_ok = true;
+    snprintf(weather_demo.city, sizeof(weather_demo.city), "广州");
+    snprintf(weather_demo.temp, sizeof(weather_demo.temp), "25°C");
+    snprintf(weather_demo.text, sizeof(weather_demo.text), "晴");
+    snprintf(weather_demo.icon, sizeof(weather_demo.icon), "100");
+    snprintf(weather_demo.aqi, sizeof(weather_demo.aqi), "44");
+    snprintf(weather_demo.aqi_category, sizeof(weather_demo.aqi_category), "优");
+    snprintf(weather_demo.uv_level, sizeof(weather_demo.uv_level), "中等");
+    weather_demo.wind360 = 225;  /* 西南风 → 箭头指向东北 */
+    snprintf(weather_demo.feels_like, sizeof(weather_demo.feels_like), "26°C");
+    snprintf(weather_demo.humidity, sizeof(weather_demo.humidity), "33%%");
+    snprintf(weather_demo.wind, sizeof(weather_demo.wind), "西南风 3级");
+    snprintf(weather_demo.update_time, sizeof(weather_demo.update_time), "14:32");
+    static const char *dates[] = {"周三 10/08", "周四 10/09", "周五 10/10"};
+    static const char *texts[] = {"晴", "多云", "阵雨"};
+    static const char *day_icons[] = {"100", "101", "300"};
+    static const char *precips[] = {"0.0", "0.0", "2.8"};
+    static const char *lunar_days[] = {"初一", "初二", "初三"};
+    static const char *highs[] = {"25°", "25°", "26°"};
+    static const char *lows[] = {"12°", "13°", "13°"};
+    for(int index = 0; index < UI_WEATHER_DAILY; ++index) {
+        snprintf(weather_demo.daily[index].date,
+                 sizeof(weather_demo.daily[index].date), "%s", dates[index]);
+        snprintf(weather_demo.daily[index].text_day,
+                 sizeof(weather_demo.daily[index].text_day), "%s", texts[index]);
+        snprintf(weather_demo.daily[index].icon_day,
+                 sizeof(weather_demo.daily[index].icon_day), "%s", day_icons[index]);
+        snprintf(weather_demo.daily[index].precip,
+                 sizeof(weather_demo.daily[index].precip), "%s", precips[index]);
+        snprintf(weather_demo.daily[index].lunar_day,
+                 sizeof(weather_demo.daily[index].lunar_day), "%s", lunar_days[index]);
+        snprintf(weather_demo.daily[index].high,
+                 sizeof(weather_demo.daily[index].high), "%s", highs[index]);
+        snprintf(weather_demo.daily[index].low,
+                 sizeof(weather_demo.daily[index].low), "%s", lows[index]);
+    }
+    ui_update_weather(&weather_demo);
     ui_update_pc_connected(true);
     ui_update_syna_conversation("今天还有什么安排？",
                                 "你有 2 项待办，最近一项是整理开发文档。");
@@ -163,6 +208,7 @@ int main(void)
     else if(start_page != NULL && strcmp(start_page, "syna") == 0) {
         ui_show_syna();
     }
+    else if(start_page != NULL && strcmp(start_page, "weather") == 0) ui_show_weather();
 
     uint32_t last_clock_update = SDL_GetTicks();
     uint32_t started_at = last_clock_update;
@@ -170,6 +216,11 @@ int main(void)
     bool screenshot_saved = false;
     const char *auto_close_value = getenv("AI_PANEL_AUTOCLOSE_MS");
     const char *screenshot_path = getenv("AI_PANEL_SCREENSHOT_PATH");
+    const char *screenshot_delay_value = getenv("AI_PANEL_SCREENSHOT_DELAY_MS");
+    uint32_t screenshot_delay_ms = 200;
+    if(screenshot_delay_value != NULL) {
+        screenshot_delay_ms = (uint32_t)strtoul(screenshot_delay_value, NULL, 10);
+    }
     if(auto_close_value != NULL) auto_close_ms = (uint32_t)strtoul(auto_close_value, NULL, 10);
 
     while(true) {
@@ -183,7 +234,8 @@ int main(void)
 
         uint32_t delay_ms = lv_timer_handler();
 
-        if(!screenshot_saved && screenshot_path != NULL && now - started_at >= 200U) {
+        if(!screenshot_saved && screenshot_path != NULL &&
+           now - started_at >= screenshot_delay_ms) {
             lv_refr_now(display);
             if(save_screenshot(display, screenshot_path) != 0) {
                 SDL_Log("Could not save simulator screenshot to %s: %s", screenshot_path, SDL_GetError());

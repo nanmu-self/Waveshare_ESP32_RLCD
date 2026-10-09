@@ -17,10 +17,19 @@
 | Syna UI 位图字体 | 数字/西文来自 Arimo，中文点阵来自 GNU Unifont 16.0.04，开机大字来自 Noto Sans CJK SC；统一按 SIL OFL 1.1 使用；见 simulator/assets/fonts/SOURCE.md 及对应许可证；不适用根目录 MIT |
 | 图标与背景 | 黑沐于 2026-09-13 确认自行制作；其原创部分按本项目 MIT 授权 |
 | 自定义唤醒词 | 配置词 ni hao xi na；底层为乐鑫 ESP-SR MultiNet7，模型不是黑沐原创；见 release/licenses/esp-sr-2.4.7-LICENSE.txt |
+| puff（gzip 解压） | Mark Adler zlib contrib/puff 2.3（xiaozhi/overlay/main/boards/waveshare/esp32-s3-rlcd-4.2/puff.cc/puff.h）；zlib 许可，仅添加 extern "C" 包裹与 C++ 文件名适配 |
+| 农历数据表 | solarlunar npm 包 lunarInfo 表（1900-2100，MIT，sintune/jjonline），嵌入 xiaozhi/overlay/main/boards/waveshare/esp32-s3-rlcd-4.2/lunar.cc；换算算法为社区通用实现，C++ 封装按本项目 MIT 授权 |
 
 小智许可证副本见 release/licenses/xiaozhi-MIT.txt。源码中原有授权头、许可证和 NOTICE 均保留。
 公开完整固件和素材包前，仍需完成资源来源及 ESP-IDF/语音模型依赖的逐项分发核查。
 不得将第三方组件宣称为黑沐独立原创，也不得把未核验资源直接标为 MIT。
+
+## 天气数据来源
+
+天气页面数据来自和风天气（QWeather）免费开发版 API（devapi.qweather.com / geoapi.qweather.com），
+Key 由用户在设置门户自行配置，不随固件分发。IP 定位使用 ip-api.com 与 myip.ipip.net 公共接口。
+和风天气免费版要求在界面展示数据来源，关于页已标注"天气数据：和风天气"。
+空气质量数据来自和风 /v7/air/now 接口（免费版可用）。天气图标为项目原创程序化生成（MIT）。
 
 ## 字体核查与替换
 
