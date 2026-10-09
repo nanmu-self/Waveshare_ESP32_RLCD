@@ -25,6 +25,7 @@ import urllib.error
 import urllib.request
 import uuid
 from dataclasses import dataclass, asdict
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -909,6 +910,10 @@ class ArkQuotaAuthError(Exception):
     """方舟接口拒绝了凭证（AK/SK 无效或签名不匹配）。"""
 
 
+class OpenCodeAuthError(Exception):
+    """OpenCode 接口拒绝了凭证（API Key 无效或过期）。"""
+
+
 ARK_HOST = "ark.cn-beijing.volcengineapi.com"
 ARK_REGION = "cn-beijing"
 ARK_SERVICE = "ark"
@@ -1077,6 +1082,105 @@ class ArkQuotaCollector(QuotaCollectorBase):
             month_resets_at=month[1] if month else None,
             updated_at=int(time.time()),
             source="ark_api",
+        )
+
+
+@register_quota_provider
+class OpenCodeQuotaCollector(QuotaCollectorBase):
+    """通过 OpenCode Zen Go 的只读接口查询套餐额度用量。
+
+    云端接口频控阈值未公开，与方舟源同采用保守轮询（5 分钟）与
+    指数退避；resetsAt 为 ISO 8601 字符串，换算为 Unix 秒后下发。
+    """
+
+    provider_name = "opencode"
+    _POLL_SECONDS = 300
+    _CACHE_SECONDS = 600
+    _SUCCESS_SOURCES = frozenset({"opencode_api"})
+    _ENDPOINT = "https://opencode.ai/zen/go/v1/usage"
+
+    def __init__(self, api_key: str = "") -> None:
+        super().__init__()
+        self._api_key = api_key.strip()
+
+    @classmethod
+    def from_config(cls, config: dict[str, Any]) -> "QuotaCollectorBase":
+        return cls(str(config.get("opencode_api_key") or ""))
+
+    def _read_snapshot(self) -> QuotaSnapshot:
+        if not self._api_key:
+            return QuotaSnapshot(updated_at=int(time.time()),
+                                 source="opencode_not_configured")
+        try:
+            usage = self._request_usage()
+        except OpenCodeAuthError as error:
+            logging.warning("OpenCode quota rejected: %s", error)
+            return QuotaSnapshot(updated_at=int(time.time()),
+                                 source="opencode_auth_failed")
+        except (OSError, ValueError) as error:
+            logging.warning("OpenCode quota unavailable: %s", error)
+            return QuotaSnapshot(updated_at=int(time.time()), source="unavailable")
+        return self._parse_snapshot(usage)
+
+    def _request_usage(self) -> dict[str, Any]:
+        request = urllib.request.Request(
+            self._ENDPOINT,
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Accept": "application/json",
+                "User-Agent": "SynaReporter/1.0",
+            },
+            method="GET")
+        try:
+            with urllib.request.urlopen(request, timeout=15.0) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            if error.code in (401, 403):
+                raise OpenCodeAuthError(f"HTTP {error.code}") from error
+            raise OSError(f"HTTP {error.code}: {error.reason}") from error
+        usage = payload.get("usage") if isinstance(payload, dict) else None
+        if not isinstance(usage, dict):
+            raise ValueError("OpenCode response missing usage")
+        return usage
+
+    @staticmethod
+    def _parse_iso_utc(value: Any) -> int | None:
+        """ISO 8601（如 2026-10-12T00:00:00.000Z）→ Unix 秒；非法返回 None。"""
+        if not isinstance(value, str) or not value:
+            return None
+        try:
+            moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        return int(moment.timestamp())
+
+    @staticmethod
+    def _parse_snapshot(usage: dict[str, Any]) -> QuotaSnapshot:
+        """rolling→短周期、weekly→周额度、monthly→月额度；percent 为已用。"""
+        windows: dict[str, tuple[int, int | None]] = {}
+        for level in ("rolling", "weekly", "monthly"):
+            item = usage.get(level)
+            if not isinstance(item, dict) or "percent" not in item:
+                continue
+            try:
+                remaining = max(0, min(100, round(100 - float(item["percent"]))))
+            except (TypeError, ValueError):
+                continue
+            windows[level] = (remaining, OpenCodeQuotaCollector._parse_iso_utc(item.get("resetsAt")))
+        short = windows.get("rolling")
+        week = windows.get("weekly")
+        month = windows.get("monthly")
+        return QuotaSnapshot(
+            short_remaining_percent=short[0] if short else None,
+            week_remaining_percent=week[0] if week else None,
+            month_remaining_percent=month[0] if month else None,
+            short_resets_at=short[1] if short else None,
+            week_resets_at=week[1] if week else None,
+            month_resets_at=month[1] if month else None,
+            updated_at=int(time.time()),
+            source="opencode_api",
         )
 
 

@@ -39,6 +39,18 @@ PROVIDER_CATALOG: tuple[dict, ...] = (
              "placeholder": "SK", "secret": True},
         ),
     },
+    {
+        "id": "opencode",
+        "display": "OpenCode Go 套餐",
+        "title": "OPENCODE",
+        "board": "OpenCode",
+        "hint": "API Key 获取：opencode.ai → Zen Go 控制台。\n"
+                "Key 只保存在本机 reporter.json，仅用于只读查询额度用量。",
+        "fields": (
+            {"key": "opencode_api_key", "label": "OpenCode API Key",
+             "placeholder": "Bearer Key", "secret": True},
+        ),
+    },
 )
 
 

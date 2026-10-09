@@ -109,6 +109,8 @@ powershell -ExecutionPolicy Bypass -File reporter\build_release.ps1 -Version 1.0
 - 额度重置倒计时 + 月额度上屏（同会话续）：UDP 新增 `codex_month_remaining`/`codex_month_resets_at`；dashboard 额度区改为整体自绘的紧凑网格（每行 = 标题(5h/周/月) | 40×5px 细进度条 | 右对齐百分比(14px) | 右对齐倒计时(14px)），倒计时极简格式 `31m`/`9h`/`2d9h`（<1分 `<1m`，≥10天退化为 `12d`），未知自动隐藏；agent 状态从黑色胶囊图改为标题行内联徽标 `● 工作中`（底图标题区遮白重绘，状态资产不再引用，DONE 闪烁保留）；`ui_update_codex_quota` 8 参；check_quota_stale 宿主测试同步（三种紧凑倒计时、填充宽度基准 38）；固件全量编译通过；模拟器截图验证。
 
 - 套餐来源上屏（同会话续）：UDP 新增 `quota_provider`（id）+ `quota_provider_title`（目录 board 字段，如"火山方舟"/"Codex"，未知 provider 回退 id）；dashboard 空白区新增"套餐 | 火山方舟"键值行（左标签 + 右对齐值，右缘与网格对齐，旧 reporter 不发时板端回退 "Codex"）；双写已同步；固件全量编译通过；UDP 探测脚本端到端验证载荷。剩余：刷板实测。
+
+- OpenCode Go 套餐源（同会话续，未实测密钥）：`OpenCodeQuotaCollector`（GET opencode.ai/zen/go/v1/usage，Bearer Key，仅标准库；`rolling`→短周期、`weekly`→周、`monthly`→月，`resetsAt` ISO 8601 转 Unix 秒；`percent` 按已用口径，待实机核对）；目录新增 opencode 条目（字段 opencode_api_key），设置对话框/工厂/板端“套餐 | OpenCode”展示全部自动适配；401/403 → `opencode_auth_failed`；轮询 300 秒同方舟。固件零改动（板端来源名走 quota_provider_title）。
 - 以上改动已在本机实测通过（Reporter 已打包验证：CPU 温度 27.9°C、核显使用率 ~10%、GPU 温度回退生效）。
 
 ### 天气页面（和风天气，本会话新增，待固件编译刷板）

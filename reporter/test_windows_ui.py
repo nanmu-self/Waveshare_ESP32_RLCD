@@ -74,7 +74,8 @@ class WindowTests(unittest.TestCase):
              'ark_secret_access_key': 'sk-secret'})
         # 回归防护：下拉框必须已加入表单布局（曾漏 addRow 导致只剩两行文字）。
         self.assertIs(combo.parent(), dialog)
-        self.assertEqual([combo.itemData(i) for i in range(combo.count())], ['codex', 'ark'])
+        self.assertEqual([combo.itemData(i) for i in range(combo.count())],
+                         ['codex', 'ark', 'opencode'])
         self.assertEqual(combo.currentData(), 'ark')
         self.assertEqual(editors['ark_access_key_id'].text(), 'AKLTdemo')
         self.assertEqual(editors['ark_secret_access_key'].echoMode(), QLineEdit.EchoMode.Password)

@@ -1,5 +1,6 @@
 # Syna project-specific code and modifications: Copyright (c) 2026 黑沐.
 # SPDX-License-Identifier: MIT; third-party notices remain applicable.
+import io
 import os
 import tempfile
 import unittest
@@ -96,6 +97,20 @@ class QuotaProviderRegistryTests(unittest.TestCase):
         self.assertEqual((collector._access_key_id, collector._secret_access_key),
                          ('AKLTdemo', 'sk-secret'))
 
+    def test_factory_builds_opencode_from_config(self):
+        collector = reporter.make_quota_collector({
+            'quota_provider': 'opencode',
+            'opencode_api_key': ' oc-key ',
+        })
+        self.assertIsInstance(collector, reporter.OpenCodeQuotaCollector)
+        self.assertEqual(collector.provider_name, 'opencode')
+        self.assertEqual(collector._api_key, 'oc-key')
+        self.assertEqual(collector._POLL_SECONDS, 300)
+
+    def test_unknown_provider_falls_back_to_codex(self):
+        collector = reporter.make_quota_collector({'quota_provider': 'something-new'})
+        self.assertIsInstance(collector, reporter.CodexQuotaCollector)
+
 
 class ArkQuotaCollectorTests(unittest.TestCase):
     # 由参考实现（火山官方签名算法的 Node 移植）用固定输入预先生成，
@@ -159,6 +174,68 @@ class ArkQuotaCollectorTests(unittest.TestCase):
         self.assertGreaterEqual(reporter.ArkQuotaCollector._POLL_SECONDS, 300)
         self.assertGreaterEqual(reporter.ArkQuotaCollector._CACHE_SECONDS,
                                 2 * reporter.ArkQuotaCollector._POLL_SECONDS)
+
+
+class OpenCodeQuotaCollectorTests(unittest.TestCase):
+    _SAMPLE = {
+        'usage': {
+            'rolling': {'status': 'ok', 'percent': 2,
+                        'resetsAt': '2026-10-09T12:58:34.000Z'},
+            'weekly': {'status': 'ok', 'percent': 0,
+                       'resetsAt': '2026-10-12T00:00:00.000Z'},
+            'monthly': {'status': 'ok', 'percent': 0,
+                        'resetsAt': '2026-11-09T07:52:25.000Z'},
+        },
+    }
+
+    def test_parse_maps_rolling_weekly_monthly_and_converts_iso(self):
+        snapshot = reporter.OpenCodeQuotaCollector._parse_snapshot(
+            self._SAMPLE['usage'])
+        self.assertEqual(snapshot.source, 'opencode_api')
+        self.assertEqual(snapshot.short_remaining_percent, 98)
+        self.assertEqual(snapshot.week_remaining_percent, 100)
+        self.assertEqual(snapshot.month_remaining_percent, 100)
+        self.assertEqual(snapshot.short_resets_at,
+                         reporter.OpenCodeQuotaCollector._parse_iso_utc(
+                             '2026-10-09T12:58:34.000Z'))
+        self.assertEqual(snapshot.week_resets_at, 1791763200)  # 2026-10-12T00:00:00Z（东八区 08:00）
+        self.assertIsNotNone(snapshot.month_resets_at)
+
+    def test_parse_tolerates_missing_windows_and_bad_values(self):
+        snapshot = reporter.OpenCodeQuotaCollector._parse_snapshot({
+            'rolling': {'status': 'ok', 'percent': 'bad'},
+            'weekly': 'junk',
+        })
+        self.assertIsNone(snapshot.short_remaining_percent)
+        self.assertIsNone(snapshot.week_remaining_percent)
+        self.assertIsNone(snapshot.month_remaining_percent)
+        self.assertIsNone(snapshot.month_resets_at)
+
+    def test_missing_key_reports_not_configured_without_network(self):
+        snapshot = reporter.OpenCodeQuotaCollector('  ')._read_snapshot()
+        self.assertEqual(snapshot.source, 'opencode_not_configured')
+        self.assertIsNone(snapshot.short_remaining_percent)
+
+    def test_http_401_maps_to_auth_failed(self):
+        collector = reporter.OpenCodeQuotaCollector('oc-key')
+        with patch.object(reporter.urllib.request, 'urlopen') as urlopen_mock:
+            urlopen_mock.side_effect = reporter.urllib.error.HTTPError(
+                'url', 401, 'Unauthorized', {}, io.BytesIO(b''))
+            snapshot = collector._read_snapshot()
+        self.assertEqual(snapshot.source, 'opencode_auth_failed')
+
+    def test_http_500_maps_to_unavailable(self):
+        collector = reporter.OpenCodeQuotaCollector('oc-key')
+        with patch.object(reporter.urllib.request, 'urlopen') as urlopen_mock:
+            urlopen_mock.side_effect = reporter.urllib.error.HTTPError(
+                'url', 500, 'Server Error', {}, io.BytesIO(b''))
+            snapshot = collector._read_snapshot()
+        self.assertEqual(snapshot.source, 'unavailable')
+
+    def test_polling_stays_conservative_for_cloud_rate_limits(self):
+        self.assertGreaterEqual(reporter.OpenCodeQuotaCollector._POLL_SECONDS, 300)
+        self.assertGreaterEqual(reporter.OpenCodeQuotaCollector._CACHE_SECONDS,
+                                2 * reporter.OpenCodeQuotaCollector._POLL_SECONDS)
 
 class DiscoveryPayloadTests(unittest.TestCase):
     def test_quota_reset_timestamps_are_published(self):

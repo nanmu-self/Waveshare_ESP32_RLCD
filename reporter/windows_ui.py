@@ -80,6 +80,8 @@ QUOTA_SOURCE_NOTES = {
     'codex_not_found': '未检测到 Codex',
     'ark_not_configured': '未配置密钥',
     'ark_auth_failed': '密钥无效',
+    'opencode_not_configured': '未配置 API Key',
+    'opencode_auth_failed': 'Key 无效',
 }
 
 
