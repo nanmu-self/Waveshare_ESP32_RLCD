@@ -5,11 +5,13 @@ from __future__ import annotations
 import argparse
 import ctypes
 import hashlib
+import hmac
 import json
 import logging
 from logging.handlers import RotatingFileHandler
 import os
 import queue
+import re
 import secrets
 import signal
 import sqlite3
@@ -19,6 +21,8 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 import uuid
 from dataclasses import dataclass, asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -30,6 +34,7 @@ import psutil
 from media_monitor import NeteaseMediaMonitor
 from macos_metrics import MacMetrics
 from codex_runtime import read_activity
+from quota_providers import DEFAULT_PROVIDER_ID
 from platform_support import application_data_dir, disk_root, codex_executable, acquire_posix_instance
 
 
@@ -50,6 +55,15 @@ def config_path() -> Path:
 
 def data_root() -> Path:
     return config_path().parent
+
+
+def read_config() -> dict[str, Any]:
+    """读取 reporter.json（容忍文件缺失或损坏），供额度数据源等设置使用。"""
+    try:
+        data = json.loads(config_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def configure_logging() -> None:
@@ -140,10 +154,248 @@ def nvidia_metrics() -> tuple[float | None, float | None]:
         return None, None
 
 
+_PDH_FMT_DOUBLE = 0x00000200
+_PDH_MORE_DATA = 0x800007D2
+_GPU_ENGINE_COUNTER = r"\GPU Engine(*)\Utilization Percentage"
+
+
+def aggregate_gpu_engine_utilization(items: list[tuple[str, float]]) -> float | None:
+    """Reduce wildcard GPU Engine samples to one adapter utilization.
+
+    Task Manager sums the engines of each type (3D, Copy, VideoDecode, ...)
+    and reports the busiest type; instances are per process per engine.
+    """
+    totals: dict[str, float] = {}
+    for name, value in items:
+        marker = name.rfind("engtype_")
+        engine = name[marker + len("engtype_"):] if marker >= 0 else "other"
+        totals[engine] = totals.get(engine, 0.0) + max(0.0, value)
+    if not totals:
+        return None
+    return round(min(100.0, max(totals.values())), 1)
+
+
+class _PdhFmtCounterValue(ctypes.Structure):
+    # PDH_FMT_COUNTERVALUE: DWORD tag, then an 8-byte value union.
+    _fields_ = [("CntyValue", ctypes.c_uint32), ("doubleValue", ctypes.c_double)]
+
+
+class _PdhCounterValueItem(ctypes.Structure):
+    # PDH_FMT_COUNTERVALUE_ITEM_W for wildcard counter arrays.
+    _fields_ = [("szName", ctypes.c_wchar_p), ("FmtValue", _PdhFmtCounterValue)]
+
+
+class WindowsGpuUtilization:
+    """GPU usage for every adapter, integrated GPUs included.
+
+    Talks to pdh.dll directly so no extra dependency is needed, and adds the
+    counter through PdhAddEnglishCounterW so localized counter names on
+    non-English Windows do not break the query. Rate counters need two
+    collected samples before the first formatted read.
+    """
+
+    def __init__(self) -> None:
+        self._ready = sys.platform == "win32"
+        self._pdh = None
+        self._query = ctypes.c_void_p(0)
+        self._counter = ctypes.c_void_p(0)
+        self._buffer = None
+        self._samples = 0
+        if self._ready:
+            self._open()
+
+    def _open(self) -> None:
+        try:
+            pdh = ctypes.WinDLL("pdh")
+            # PDH statuses are unsigned DWORDs. Without an explicit restype
+            # ctypes treats them as signed ints, so PDH_MORE_DATA
+            # (0x800007D2) arrives negative and every formatted read would
+            # be mistaken for a failure.
+            for name in ("PdhOpenQueryW", "PdhAddEnglishCounterW",
+                         "PdhCollectQueryData", "PdhGetFormattedCounterArrayW"):
+                getattr(pdh, name).restype = ctypes.c_uint32
+            query = ctypes.c_void_p(0)
+            counter = ctypes.c_void_p(0)
+            if pdh.PdhOpenQueryW(None, 0, ctypes.byref(query)) != 0:
+                raise OSError("PdhOpenQueryW failed")
+            if pdh.PdhAddEnglishCounterW(
+                query, _GPU_ENGINE_COUNTER, 0, ctypes.byref(counter)
+            ) != 0:
+                raise OSError("PdhAddEnglishCounterW failed")
+            self._pdh = pdh
+            self._query = query
+            self._counter = counter
+        except (OSError, AttributeError):
+            self._ready = False
+
+    def read(self) -> float | None:
+        if not self._ready:
+            return None
+        pdh = self._pdh
+        try:
+            if pdh.PdhCollectQueryData(self._query) != 0:
+                raise OSError("PdhCollectQueryData failed")
+            self._samples += 1
+            if self._samples < 2:
+                return None
+            size = ctypes.c_ulong(0)
+            count = ctypes.c_ulong(0)
+            status = pdh.PdhGetFormattedCounterArrayW(
+                self._counter, _PDH_FMT_DOUBLE,
+                ctypes.byref(size), ctypes.byref(count), None)
+            if status == _PDH_MORE_DATA:
+                self._buffer = (ctypes.c_char * size.value)()
+                status = pdh.PdhGetFormattedCounterArrayW(
+                    self._counter, _PDH_FMT_DOUBLE,
+                    ctypes.byref(size), ctypes.byref(count), self._buffer)
+            if status != 0:
+                raise OSError("PdhGetFormattedCounterArrayW failed")
+            if count.value == 0:
+                return None
+            items = ctypes.cast(
+                self._buffer, ctypes.POINTER(_PdhCounterValueItem))
+            pairs = [
+                (items[index].szName or "", items[index].FmtValue.doubleValue)
+                for index in range(count.value)
+            ]
+            return aggregate_gpu_engine_utilization(pairs)
+        except (OSError, ValueError):
+            # Broken counters stay broken; stop paying the sampling cost.
+            self._ready = False
+            return None
+
+
+_VIRTUAL_ADAPTER_MARKERS = (
+    "virtual", "basic display", "remote display", "indirect display",
+    "idd", "oray", "todesk", "teamviewer", "parsec", "mirror", "hyper-v",
+)
+
+
+def classify_gpu_adapters(names: list[str]) -> bool:
+    """True only when every real adapter is an integrated GPU on the CPU die.
+
+    Remote-desktop software (Oray, RDP, ToDesk, ...) installs indirect
+    display adapters that must be ignored, or they would veto the real iGPU.
+    """
+    if not names:
+        return False
+    saw_integrated = False
+    for raw in names:
+        name = raw.strip().lower()
+        if not name or any(marker in name for marker in _VIRTUAL_ADAPTER_MARKERS):
+            continue  # shadow display adapters carry no die of their own
+        if "nvidia" in name:
+            return False
+        if "intel" in name:
+            if "arc" in name:
+                return False  # discrete card, separate die
+            saw_integrated = True
+        elif "amd" in name or "radeon" in name:
+            # APUs ship as generic "Radeon(TM) Graphics"/"Radeon 780M";
+            # RX/Pro/WX/Fury naming marks discrete cards with their own die.
+            if re.search(r"\brx\b|\bpro\b|\bwx\b|fury", name):
+                return False
+            saw_integrated = True
+        else:
+            return False  # unknown vendor: never guess temperatures
+    return saw_integrated
+
+
+_integrated_gpu_cached: bool | None = None
+_integrated_gpu_checked_at = 0.0
+
+
+def integrated_gpu_only() -> bool:
+    global _integrated_gpu_cached, _integrated_gpu_checked_at
+    now = time.monotonic()
+    if _integrated_gpu_cached is not None and now - _integrated_gpu_checked_at < 600.0:
+        return _integrated_gpu_cached
+    result = False
+    if os.name == "nt":
+        try:
+            probe = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                 "(Get-CimInstance Win32_VideoController).Name"],
+                capture_output=True,
+                text=True,
+                timeout=3.0,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                check=False,
+            )
+            result = classify_gpu_adapters(probe.stdout.splitlines())
+        except (OSError, subprocess.SubprocessError):
+            result = False
+    _integrated_gpu_cached = result
+    _integrated_gpu_checked_at = now
+    return result
+
+
+_CPU_TEMP_PROBE_SECONDS = 10.0   # cache window after a successful reading
+_CPU_TEMP_MISSING_SECONDS = 30.0 # slower retry while no source works
+
+
+def parse_thermal_numbers(text: str) -> list[float]:
+    """Extract one float per non-empty line, ignoring CIM nulls and noise."""
+    numbers: list[float] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            numbers.append(float(line))
+        except ValueError:
+            continue
+    return numbers
+
+
+def normalize_thermal_celsius(raw: float) -> float | None:
+    """ACPI zones report Kelvin, usually in tenths; some drivers round."""
+    temperature = raw / 10.0 - 273.15 if raw > 1000 else raw - 273.15
+    if 0 < temperature < 130:
+        return round(temperature, 1)
+    return None
+
+
+def windows_thermal_numbers() -> list[float]:
+    """Read ACPI thermal zones through PowerShell CIM.
+
+    The previous wmic fallback broke on Windows 11 24H2 where wmic.exe was
+    removed; Get-CimInstance reaches the same zones on every supported
+    Windows version. One spawn serves both counter sources.
+    """
+    if os.name != "nt":
+        return []
+    command = [
+        "powershell", "-NoProfile", "-NonInteractive", "-Command",
+        "$zones = Get-CimInstance -Namespace root/wmi "
+        "-ClassName MSAcpi_ThermalZoneTemperature -ErrorAction SilentlyContinue; "
+        "if ($zones) { $zones | ForEach-Object { $_.CurrentTemperature } }; "
+        "$counters = Get-CimInstance -ClassName "
+        "Win32_PerfFormattedData_Counters_ThermalZoneInformation "
+        "-ErrorAction SilentlyContinue; "
+        "if ($counters) { $counters | ForEach-Object { "
+        "$_.HighPrecisionTemperature; $_.Temperature } }",
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=3.0,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return parse_thermal_numbers(result.stdout)
+
+
 def cpu_temperature() -> float | None:
     global _cpu_temp_cached, _cpu_temp_checked_at
     now = time.monotonic()
-    if now - _cpu_temp_checked_at < 5.0:
+    window = (_CPU_TEMP_PROBE_SECONDS if _cpu_temp_cached is not None
+              else _CPU_TEMP_MISSING_SECONDS)
+    if now - _cpu_temp_checked_at < window:
         return _cpu_temp_cached
 
     candidates: list[float] = []
@@ -158,35 +410,14 @@ def cpu_temperature() -> float | None:
         if entry.current is not None and 0 < float(entry.current) < 130
     )
 
-    # psutil does not expose temperatures on most Windows machines. Windows'
-    # formatted ACPI thermal-zone counter reports whole Kelvin and gives us a
-    # useful hardware fallback without requiring another monitoring program.
+    # psutil does not expose temperatures on most Windows machines. The ACPI
+    # thermal zone is the closest hardware source available without loading a
+    # monitoring driver; some boards answer, others stay silent.
     if not candidates and os.name == "nt":
-        try:
-            result = subprocess.run(
-                [
-                    "wmic",
-                    "path",
-                    "Win32_PerfFormattedData_Counters_ThermalZoneInformation",
-                    "get",
-                    "Temperature",
-                    "/value",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=1.5,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                check=False,
-            )
-            for line in result.stdout.splitlines():
-                if not line.startswith("Temperature="):
-                    continue
-                raw = float(line.split("=", 1)[1].strip())
-                temperature = raw / 10.0 - 273.15 if raw > 1000 else raw - 273.15
-                if 0 < temperature < 130:
-                    candidates.append(temperature)
-        except (OSError, ValueError, subprocess.SubprocessError):
-            pass
+        for raw in windows_thermal_numbers():
+            temperature = normalize_thermal_celsius(raw)
+            if temperature is not None:
+                candidates.append(temperature)
 
     _cpu_temp_cached = round(max(candidates), 1) if candidates else None
     _cpu_temp_checked_at = now
@@ -210,6 +441,7 @@ class MetricsCollector:
         self._lock = threading.Lock()
         self._snapshot = PerformanceSnapshot()
         self._mac_metrics = MacMetrics() if sys.platform == "darwin" else None
+        self._gpu_util = WindowsGpuUtilization()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="metrics", daemon=True)
 
@@ -237,6 +469,12 @@ class MetricsCollector:
                 gpu_percent, cpu_temp, gpu_temp = self._mac_metrics.read()
             else:
                 gpu_percent, gpu_temp = nvidia_metrics()
+                if gpu_percent is None:
+                    gpu_percent = self._gpu_util.read()
+                    if gpu_temp is None and gpu_percent is not None and integrated_gpu_only():
+                        # An iGPU shares the CPU die, so the CPU reading is
+                        # the closest temperature available without vendor SDKs.
+                        gpu_temp = cpu_temperature()
                 cpu_temp = cpu_temperature()
             snapshot = PerformanceSnapshot(
                 cpu_percent=round(psutil.cpu_percent(interval=None), 1),
@@ -407,40 +645,37 @@ class QuotaSnapshot:
     stale: bool = False
 
 
-class CodexQuotaCollector:
-    """Poll the local Codex app-server account rate-limit snapshot."""
+# 额度数据源注册表：provider_name -> 收集器类。新增套餐见 quota_providers.py 模块注释。
+QUOTA_PROVIDERS: dict[str, type["QuotaCollectorBase"]] = {}
+
+
+def register_quota_provider(cls: type["QuotaCollectorBase"]) -> type["QuotaCollectorBase"]:
+    """注册额度数据源类；provider_name 对应 quota_providers.PROVIDER_CATALOG 的 id。"""
+    QUOTA_PROVIDERS[cls.provider_name] = cls
+    return cls
+
+
+class QuotaCollectorBase:
+    """额度数据源的共用轮询/缓存逻辑（Codex 本机登录与火山方舟 API 共用）。"""
 
     _POLL_SECONDS = 30
     _CACHE_SECONDS = 120
+    _SUCCESS_SOURCES: frozenset[str] = frozenset()
+    provider_name = ""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._process_lock = threading.Lock()
-        self._process = None
         self._snapshot = QuotaSnapshot()
         self._success_at = float('-inf')
         self._failures = 0
         self._stop = threading.Event()
-        self._thread = threading.Thread(target=self._run, name="codex-quota", daemon=True)
+        self._thread = threading.Thread(target=self._run, name="quota-collector", daemon=True)
 
     def start(self) -> None:
         self._thread.start()
 
     def stop(self) -> None:
         self._stop.set()
-        with self._process_lock:
-            process = self._process
-            if process is not None and process.poll() is None:
-                try:
-                    process.terminate()
-                except ProcessLookupError:
-                    pass
-        if process is not None:
-            try:
-                process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=2)
         self._thread.join(timeout=3)
 
     def snapshot(self) -> QuotaSnapshot:
@@ -470,8 +705,8 @@ class CodexQuotaCollector:
                 return min(5 * 2 ** (self._failures - 1), self._POLL_SECONDS)
             self._failures = 0
             self._snapshot = snapshot
-            # Authentication failures and missing Codex must invalidate the cache.
-            self._success_at = time.monotonic() if snapshot.source == "codex_app_server" else float('-inf')
+            # 认证类失败与未找到数据源必须使缓存立即失效。
+            self._success_at = time.monotonic() if snapshot.source in self._SUCCESS_SOURCES else float('-inf')
             return self._POLL_SECONDS
 
     def _run(self) -> None:
@@ -480,6 +715,43 @@ class CodexQuotaCollector:
             delay = self._accept_snapshot(snapshot)
             if self._stop.wait(delay):
                 break
+
+    def _read_snapshot(self) -> QuotaSnapshot:  # pragma: no cover - 由子类实现
+        raise NotImplementedError
+
+
+@register_quota_provider
+class CodexQuotaCollector(QuotaCollectorBase):
+    """Poll the local Codex app-server account rate-limit snapshot."""
+
+    provider_name = "codex"
+    _SUCCESS_SOURCES = frozenset({"codex_app_server"})
+
+    @classmethod
+    def from_config(cls, config: dict[str, Any]) -> "QuotaCollectorBase":
+        return cls()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._process_lock = threading.Lock()
+        self._process = None
+
+    def stop(self) -> None:
+        self._stop.set()
+        with self._process_lock:
+            process = self._process
+            if process is not None and process.poll() is None:
+                try:
+                    process.terminate()
+                except ProcessLookupError:
+                    pass
+        if process is not None:
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=2)
+        super().stop()
 
     @staticmethod
     def _codex_executable() -> str | None:
@@ -631,10 +903,193 @@ class CodexQuotaCollector:
         )
 
 
+class ArkQuotaAuthError(Exception):
+    """方舟接口拒绝了凭证（AK/SK 无效或签名不匹配）。"""
+
+
+ARK_HOST = "ark.cn-beijing.volcengineapi.com"
+ARK_REGION = "cn-beijing"
+ARK_SERVICE = "ark"
+_ARK_ACTION_QUERY = {"Action": "GetCodingPlanUsage", "Version": "2024-01-01"}
+
+
+def volc_uri_encode(value: str) -> str:
+    """火山引擎 V4 要求的 URI 编码：仅 A-Za-z0-9-_.~ 不转义，其余转大写十六进制。"""
+    safe = frozenset(
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~")
+    return "".join(
+        char if char in safe
+        else "".join(f"%{byte:02X}" for byte in char.encode("utf-8"))
+        for char in value
+    )
+
+
+def volc_canonical_query(query: dict[str, str]) -> str:
+    """构造规范查询串（按 key 排序）。"""
+    return "&".join(
+        f"{volc_uri_encode(key)}={volc_uri_encode(query[key])}" for key in sorted(query))
+
+
+def volc_signing_key(secret_key: bytes, short_date: str, region: str, service: str) -> bytes:
+    """派生签名密钥：第一轮直接用 SK 作 HMAC 密钥（不加算法名前缀）。"""
+    key = hmac.new(secret_key, short_date.encode("ascii"), hashlib.sha256).digest()
+    key = hmac.new(key, region.encode("ascii"), hashlib.sha256).digest()
+    key = hmac.new(key, service.encode("ascii"), hashlib.sha256).digest()
+    return hmac.new(key, b"request", hashlib.sha256).digest()
+
+
+def volc_authorization_header(access_key_id: str, secret_access_key: str, x_date: str,
+                              query: dict[str, str], region: str = ARK_REGION,
+                              service: str = ARK_SERVICE, method: str = "GET",
+                              body: bytes = b"") -> str:
+    """构造火山引擎 V4 签名的 Authorization 头（GET 请求仅 x-date 参与签名）。"""
+    short_date = x_date[:8]
+    canonical_query = volc_canonical_query(query)
+    body_hash = hashlib.sha256(body).hexdigest()
+    canonical_request = "\n".join(
+        [method, "/", canonical_query, f"x-date:{x_date}\n", "x-date", body_hash])
+    credential_scope = f"{short_date}/{region}/{service}/request"
+    string_to_sign = "\n".join([
+        "HMAC-SHA256", x_date, credential_scope,
+        hashlib.sha256(canonical_request.encode("utf-8")).hexdigest(),
+    ])
+    signature = hmac.new(
+        volc_signing_key(secret_access_key.encode("utf-8"), short_date, region, service),
+        string_to_sign.encode("utf-8"), hashlib.sha256,
+    ).hexdigest()
+    return (f"HMAC-SHA256 Credential={access_key_id}/{credential_scope}, "
+            f"SignedHeaders=x-date, Signature={signature}")
+
+
+@register_quota_provider
+class ArkQuotaCollector(QuotaCollectorBase):
+    """通过火山引擎 V4 签名 HTTPS 接口查询「Coding Plan」额度用量。
+
+    云端接口存在频控（官方未公开具体阈值；实测 ~6 QPS 突发可用，
+    但长周期配额未知），故采用保守轮询：5 分钟一次（288 次/天），
+    失败时指数退避（封顶同轮询间隔）；陈旧缓存覆盖两个轮询周期，
+    避免单次失败就让屏幕从“上次数据”跌成“--”。
+    """
+
+    provider_name = "ark"
+    _POLL_SECONDS = 300
+    _CACHE_SECONDS = 600
+    _SUCCESS_SOURCES = frozenset({"ark_api"})
+    _AUTH_TOKENS = ("auth", "signature", "accesskey")
+
+    def __init__(self, access_key_id: str = "", secret_access_key: str = "") -> None:
+        super().__init__()
+        self._access_key_id = access_key_id.strip()
+        self._secret_access_key = secret_access_key.strip()
+
+    @classmethod
+    def from_config(cls, config: dict[str, Any]) -> "QuotaCollectorBase":
+        return cls(
+            str(config.get("ark_access_key_id") or ""),
+            str(config.get("ark_secret_access_key") or ""))
+
+    def _read_snapshot(self) -> QuotaSnapshot:
+        if not self._access_key_id or not self._secret_access_key:
+            return QuotaSnapshot(updated_at=int(time.time()), source="ark_not_configured")
+        try:
+            result = self._request_usage()
+        except ArkQuotaAuthError as error:
+            logging.warning("Ark quota rejected: %s", error)
+            return QuotaSnapshot(updated_at=int(time.time()), source="ark_auth_failed")
+        except (OSError, ValueError) as error:
+            logging.warning("Ark quota unavailable: %s", error)
+            return QuotaSnapshot(updated_at=int(time.time()), source="unavailable")
+        return self._parse_snapshot(result)
+
+    def _request_usage(self) -> dict[str, Any]:
+        x_date = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        authorization = volc_authorization_header(
+            self._access_key_id, self._secret_access_key, x_date, _ARK_ACTION_QUERY)
+        request = urllib.request.Request(
+            f"https://{ARK_HOST}/?{volc_canonical_query(_ARK_ACTION_QUERY)}",
+            headers={
+                "x-date": x_date,
+                "Authorization": authorization,
+                "User-Agent": "SynaReporter/1.0",
+            },
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=15.0) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            code = self._error_code(error.read().decode("utf-8", "replace"))
+            if any(token in code.casefold() for token in self._AUTH_TOKENS):
+                raise ArkQuotaAuthError(f"HTTP {error.code} {code}") from error
+            # 429（限流）与其它 4xx/5xx 一致走 unavailable，由基类指数退避减速。
+            raise OSError(f"HTTP {error.code}: {code or error.reason}") from error
+        if not isinstance(payload, dict):
+            raise ValueError("Ark response is not an object")
+        error = (payload.get("ResponseMetadata") or {}).get("Error")
+        if isinstance(error, dict):
+            code = str(error.get("Code") or "")
+            if any(token in code.casefold() for token in self._AUTH_TOKENS):
+                raise ArkQuotaAuthError(f"{code}: {error.get('Message') or code}")
+            raise ValueError(f"Ark API error {code}: {error.get('Message') or code}")
+        result = payload.get("Result")
+        if not isinstance(result, dict):
+            raise ValueError("Ark response missing Result")
+        return result
+
+    @staticmethod
+    def _error_code(body: str) -> str:
+        try:
+            payload = json.loads(body)
+        except ValueError:
+            return ""
+        error = (payload.get("ResponseMetadata") or {}).get("Error")
+        return str(error.get("Code") or "") if isinstance(error, dict) else ""
+
+    @staticmethod
+    def _parse_snapshot(result: dict[str, Any]) -> QuotaSnapshot:
+        """QuotaUsage 的 Level 映射：session→短周期，weekly→周额度（monthly 忽略）。"""
+        items = result.get("QuotaUsage")
+        usage: dict[str, tuple[int, int | None]] = {}
+        for item in items if isinstance(items, list) else []:
+            if not isinstance(item, dict) or "Percent" not in item:
+                continue
+            try:
+                remaining = max(0, min(100, round(100 - float(item["Percent"]))))
+            except (TypeError, ValueError):
+                continue
+            reset = item.get("ResetTimestamp")
+            usage[str(item.get("Level") or "").casefold()] = (
+                remaining, int(reset) if reset is not None else None)
+        short = usage.get("session")
+        if short is None:
+            short = next((value for level, value in usage.items()
+                          if level not in {"weekly", "monthly"}), None)
+        week = usage.get("weekly")
+        return QuotaSnapshot(
+            short_remaining_percent=short[0] if short else None,
+            week_remaining_percent=week[0] if week else None,
+            short_resets_at=short[1] if short else None,
+            week_resets_at=week[1] if week else None,
+            updated_at=int(time.time()),
+            source="ark_api",
+        )
+
+
+def make_quota_collector(config: dict[str, Any] | None = None) -> QuotaCollectorBase:
+    """按 reporter.json 的 quota_provider 构建额度数据源；未知值回退默认并告警。"""
+    cfg = read_config() if config is None else config
+    provider = str(cfg.get("quota_provider") or DEFAULT_PROVIDER_ID).casefold()
+    factory = QUOTA_PROVIDERS.get(provider)
+    if factory is None:
+        logging.warning("未知的额度数据源 %r，回退到 %s", provider, DEFAULT_PROVIDER_ID)
+        factory = QUOTA_PROVIDERS[DEFAULT_PROVIDER_ID]
+    return factory.from_config(cfg)
+
+
 class ReporterState:
     def __init__(self, identity: dict[str, str], collector: MetricsCollector,
                  agent_monitor: CodexAgentMonitor,
-                 quota_collector: CodexQuotaCollector,
+                 quota_collector: QuotaCollectorBase,
                  media_monitor: NeteaseMediaMonitor, http_port: int = HTTP_PORT) -> None:
         self.http_port = http_port
         self.reporter_id = identity["reporter_id"]
@@ -685,6 +1140,7 @@ class ReporterState:
             "performance": asdict(self.collector.snapshot()),
             "agent": asdict(self._agent_snapshot()),
             "codex_quota": asdict(self.quota_collector.snapshot()),
+            "quota_provider": self.quota_collector.provider_name,
             "media": asdict(self.media_monitor.snapshot()),
         }
 
@@ -823,7 +1279,7 @@ def run_worker(port: int) -> int:
     identity = load_identity()
     collector = MetricsCollector()
     agent_monitor = CodexAgentMonitor()
-    quota_collector = CodexQuotaCollector()
+    quota_collector = make_quota_collector()
     media_monitor = NeteaseMediaMonitor()
     state = ReporterState(identity, collector, agent_monitor, quota_collector, media_monitor, port)
     discovery = DiscoveryServer(state)

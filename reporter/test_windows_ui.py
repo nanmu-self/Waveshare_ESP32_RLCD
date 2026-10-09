@@ -3,6 +3,7 @@
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
 try:
@@ -10,7 +11,8 @@ try:
 except ImportError:
     raise unittest.SkipTest("Windows UI tests require PySide6-Essentials")
 from PySide6.QtCore import QEventLoop, QTimer
-from windows_ui import ReporterWindow, number, launch_command, set_login, login_enabled
+from windows_ui import (ReporterWindow, number, launch_command, set_login, login_enabled,
+                        read_settings, write_settings)
 
 app = QApplication.instance() or QApplication([])
 
@@ -40,6 +42,29 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.window.labels['quota_status'].text(), 'CODEX')
         self.window.offline()
         self.assertNotIn('60', self.window.labels['quota'].text())
+
+    def test_quota_provider_title_follows_status_payload(self):
+        self.window.render({'quota_provider': 'ark',
+                            'codex_quota': {'short_remaining_percent': 49, 'week_remaining_percent': 78}})
+        self.assertEqual(self.window.labels['quota_status'].text(), '方舟')
+        self.window.render({'quota_provider': 'ark',
+                            'codex_quota': {'source': 'ark_not_configured'}})
+        self.assertEqual(self.window.labels['quota_status'].text(), '方舟 · 未配置密钥')
+        self.window.render({'quota_provider': 'ark',
+                            'codex_quota': {'source': 'ark_auth_failed'}})
+        self.assertEqual(self.window.labels['quota_status'].text(), '方舟 · 密钥无效')
+        self.window.render({'quota_provider': 'codex', 'codex_quota': {}})
+        self.assertEqual(self.window.labels['quota_status'].text(), 'CODEX')
+
+    def test_settings_roundtrip_in_isolated_dir(self):
+        with tempfile.TemporaryDirectory() as root, patch.dict(
+                os.environ, {'SYNA_REPORTER_DATA_DIR': root}, clear=False):
+            write_settings({'quota_provider': 'ark', 'ark_secret_access_key': 'sk'})
+            data = read_settings()
+            self.assertEqual(data['quota_provider'], 'ark')
+            self.assertEqual(data['ark_secret_access_key'], 'sk')
+            write_settings({'ark_access_key_id': 'AK'})
+            self.assertEqual(read_settings().get('quota_provider'), 'ark')  # 不丢已有键
 
     def test_disconnect_clears_all_live_values(self):
         self.window.render({'computer_name': 'old host', 'performance': {'gpu_percent': 99}, 'media': {'available': True, 'title': 'old song'}, 'devices':[{'ip':'test'}]})

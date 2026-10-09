@@ -43,7 +43,7 @@ http://127.0.0.1:8765/api/v1/health
 http://127.0.0.1:8765/api/v1/status
 ```
 
-当前 MVP 的性能数据包括 CPU、Memory、GPU、Disk 使用率、GPU 温度和实时网络速度。Windows 没有通用可靠的 CPU 温度接口时会返回 `null`，屏幕显示 `--`。NVIDIA GPU 指标通过 `nvidia-smi` 获取；没有 NVIDIA GPU 时 GPU 项显示 `--`。
+当前 MVP 的性能数据包括 CPU、Memory、GPU、Disk 使用率、GPU 温度和实时网络速度。Windows CPU 温度优先读 psutil，失败时用 PowerShell `Get-CimInstance` 查询 ACPI 温度区（旧版依赖的 `wmic` 在 Windows 11 24H2 已移除，不再使用）；部分主板不开放温度区，仍不可用时返回 `null`，屏幕显示 `--`。NVIDIA GPU 指标通过 `nvidia-smi` 获取；无 NVIDIA 时 GPU 使用率走 Windows PDH `GPU Engine` 计数器（核显同样适用，且用 `PdhAddEnglishCounter` 避免 Windows 语言差异）；仅核显的机器 GPU 温度用 CPU 温度近似（同一晶片），Intel Arc / AMD 独显等分立显卡不套用，显示 `--`；识别时忽略向日葵、RDP 等远程桌面虚拟显示适配器。
 
 ## Codex Agent 状态
 
@@ -53,11 +53,18 @@ Reporter 优先从 Codex 本地 `logs_2.sqlite` 提取固定格式的任务开�
 
 正式安装版不再使用 VBS。安装程序写入系统启动项，启动隐藏的 supervisor；运行日志位于 `%LOCALAPPDATA%\AIAgentPanel\reporter.log`。它与 VS Code 进程相互独立，执行 `Developer: Reload Window` 不再是状态同步的必要步骤。
 
-## Codex 额度
+## 额度来源（Codex / 火山方舟，可扩展）
 
-Reporter 每 30 秒通过本机 Codex App Server 的 `account/rateLimits/read` 读取账户限额，把 `usedPercent` 换算为剩余百分比，并按 `windowDurationMins` 区分短周期额度和周额度。数据通过 UDP 随电脑状态一并发送给屏幕；某个周期没有可靠数据时显示 `--`，不会用固定值或本地 token 消耗量估算。
+额度卡片的数据源可切换，状态窗口“额度来源”按钮里选择；协议字段名固定为 `codex_short_remaining` / `codex_week_remaining` / `codex_login_required` / `codex_quota_stale`，开发板不感知数据源，切换无需刷固件。
 
-这一过程使用当前电脑已登录的 Codex 客户端，仅调用只读限额接口，不读取认证令牌、提示词、对话或代码。Codex 客户端升级后若本地 App Server 协议变化，需要同步更新 Reporter 适配器。
+- **Codex（默认）**：每 30 秒通过本机 Codex App Server 的 `account/rateLimits/read` 读取账户限额，把 `usedPercent` 换算为剩余百分比，并按 `windowDurationMins` 区分短周期额度和周额度。
+- **火山方舟 Coding Plan**：每 5 分钟调用 `GetCodingPlanUsage`（火山引擎 V4 签名，仅标准库实现；云端接口频控阈值未公开，实测短时突发可用但长周期配额未知，故采用保守轮询并指数退避），`session` 档映射短周期、`weekly` 档映射周额度，`monthly` 暂不展示。需要在本机保存访问密钥（火山引擎控制台 → 访问控制 IAM → API 访问密钥），AK/SK 只写入 `%LOCALAPPDATA%\AIAgentPanel\reporter.json`，仅用于只读查询额度；未配置时屏幕显示 `--`，密钥无效时状态窗口提示“密钥无效”。
+
+数据源目录在 `quota_providers.py`（纯数据：展示名、说明、需填写的字段），收集器在 `reporter.py` 内实现并挂 `@register_quota_provider` 注册；新增套餐（如 OpenCode）只需新增一个收集器类 + 一条目录描述，UI 与工厂全部自动适配，未知 `quota_provider` 值回退到 Codex 并记录告警。
+
+这一过程只调用只读限额接口，不读取认证令牌、提示词、对话或代码。Codex 客户端升级后若本地 App Server 协议变化，需要同步更新 Reporter 适配器。
+
+注意：Agent 卡的任务/工作区状态始终来自本机 Codex，与额度来源无关；切换到方舟后若本机未登录 Codex，额度照常显示，Agent 卡仍会提示登录 Codex（任务状态功能需要）。
 
 Codex 未登录时 Reporter 会立刻清除旧额度，上报登录所需状态；屏幕显示“请登录”，两项额度显示 `--`。登录成功后最迟在下一次 30 秒轮询恢复。
 

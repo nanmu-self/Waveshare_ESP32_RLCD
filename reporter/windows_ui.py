@@ -17,11 +17,14 @@ import time
 from PySide6.QtCore import Qt, QTimer, QProcess, QUrl, QLockFile
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap, QAction
 from PySide6.QtNetwork import QLocalServer, QLocalSocket, QNetworkAccessManager, QNetworkRequest, QNetworkProxy, QNetworkReply
-from PySide6.QtWidgets import QApplication, QWidget, QLabel, QPushButton, QCheckBox, QMessageBox, QSystemTrayIcon, QMenu, QScrollArea, QVBoxLayout, QStyle
+from PySide6.QtWidgets import (QApplication, QWidget, QLabel, QPushButton, QCheckBox, QMessageBox,
+                               QSystemTrayIcon, QMenu, QScrollArea, QVBoxLayout, QStyle, QDialog,
+                               QComboBox, QLineEdit, QDialogButtonBox, QFormLayout)
 from PySide6.QtGui import QDesktopServices
 from platform_support import application_data_dir
+from quota_providers import DEFAULT_PROVIDER_ID, PROVIDER_CATALOG, provider_spec
 
-REPOSITORY = 'https://github.com/heimumumu/Waveshare_ESP32_RLCD'
+REPOSITORY = 'https://github.com/nanmu-self/Waveshare_ESP32_RLCD'
 RUN_KEY = r'Software\Microsoft\Windows\CurrentVersion\Run'
 
 
@@ -65,6 +68,40 @@ def rate(value):
         return '—'
     value = max(0, value)
     return f'{value / 1048576:.2f} MB/s' if value >= 1048576 else f'{value / 1024:.1f} KB/s'
+
+
+# 额度数据源异常状态的通用提示（与收集器 source 字段对应）。
+QUOTA_SOURCE_NOTES = {
+    'unavailable': '额度暂不可用',
+    'login_required': '请登录',
+    'codex_not_found': '未检测到 Codex',
+    'ark_not_configured': '未配置密钥',
+    'ark_auth_failed': '密钥无效',
+}
+
+
+def provider_title(provider_id):
+    spec = provider_spec(str(provider_id or DEFAULT_PROVIDER_ID)) or {}
+    return spec.get('title') or 'QUOTA'
+
+
+def read_settings():
+    path = application_data_dir() / 'reporter.json'
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        data = {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_settings(update):
+    path = application_data_dir() / 'reporter.json'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = read_settings()
+    data.update(update)
+    temporary = path.with_suffix('.tmp')
+    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+    temporary.replace(path)
 
 
 class ElidedLabel(QLabel):
@@ -204,10 +241,11 @@ class ReporterWindow(QWidget):
         self.labels['device'].setToolTip('表示最近 15 秒收到发现请求，不代表开发板已选中本机。')
         self.toggle = self.button('正在检查…', 28, 129, self.toggle_service)
         self.toggle.setEnabled(False)
-        self.diagnostic = self.button('查看诊断', 169, 108, lambda: QDesktopServices.openUrl(QUrl('http://127.0.0.1:8765/api/v1/status')))
-        self.button('打开日志', 288, 108, self.open_logs)
-        self.button('关于作者', 407, 108, self.about)
-        self.text(self, '等待首次更新', 526, 635, 206, 22, 11, muted=True, key='updated').setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.diagnostic = self.button('查看诊断', 169, 95, lambda: QDesktopServices.openUrl(QUrl('http://127.0.0.1:8765/api/v1/status')))
+        self.button('打开日志', 274, 95, self.open_logs)
+        self.button('额度来源', 379, 95, self.quota_source)
+        self.button('关于作者', 484, 95, self.about)
+        self.text(self, '等待首次更新', 589, 635, 143, 22, 11, muted=True, key='updated').setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.login = QCheckBox('登录时自动启动', self.content)
         self.login.setGeometry(28, 674, 210, 26)
         self.login.clicked.connect(self.toggle_login)
@@ -236,8 +274,12 @@ class ReporterWindow(QWidget):
         names = {'working':'工作中','done':'已完成','idle':'空闲','offline':'未运行','login_required':'请登录 Codex','waiting':'等待输入'}
         self.put('agent', names.get(state, '状态不可用') + (f"  ·  {agent.get('active_count',0)} 个任务" if state == 'working' else ''))
         quota = body.get('codex_quota', {})
-        self.put('quota_status', 'CODEX · 更新失败，显示上次数据' if quota.get('stale') else
-                 'CODEX · 额度暂不可用' if quota.get('source') == 'unavailable' else 'CODEX')
+        title = provider_title(body.get('quota_provider'))
+        if quota.get('stale'):
+            self.put('quota_status', title + ' · 更新失败，显示上次数据')
+        else:
+            note = QUOTA_SOURCE_NOTES.get(quota.get('source') or '', '')
+            self.put('quota_status', title + (' · ' + note if note else ''))
         self.put('quota', '短周期剩余 '+number(quota.get('short_remaining_percent'),'%')+'    ·    周额度剩余 '+number(quota.get('week_remaining_percent'),'%'))
         media = body.get('media', {})
         def clock(value):
@@ -269,7 +311,7 @@ class ReporterWindow(QWidget):
         self.put('download', '↓  —')
         self.put('agent', '等待服务启动')
         self.put('quota', '短周期剩余 —    ·    周额度剩余 —')
-        self.put('quota_status', 'CODEX')
+        self.put('quota_status', provider_title(DEFAULT_PROVIDER_ID))
         self.put('music', '等待服务启动')
         self.put('music_detail', '—')
         self.put('device', '服务停止时，不向开发板发送数据。')
@@ -372,6 +414,61 @@ class ReporterWindow(QWidget):
             QMessageBox.warning(self, '无法更改自启动设置', str(exc))
         self.refresh_login()
 
+    def quota_source(self):
+        """额度数据源设置：目录驱动，新增套餐无需改此对话框。"""
+        settings = read_settings()
+        dialog = QDialog(self)
+        dialog.setWindowTitle('额度来源设置')
+        layout = QVBoxLayout(dialog)
+        intro = QLabel('选择开发板“额度”卡片的数据来源；切换后需重启服务生效。')
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+        form = QFormLayout()
+        combo = QComboBox()
+        editors, rows = {}, {}
+        for spec in PROVIDER_CATALOG:
+            combo.addItem(spec['display'], spec['id'])
+            for field in spec['fields']:
+                editor = QLineEdit(str(settings.get(field['key']) or ''))
+                editor.setPlaceholderText(field.get('placeholder', ''))
+                if field.get('secret'):
+                    editor.setEchoMode(QLineEdit.Password)
+                rows[field['key']] = form.rowCount()
+                form.addRow(field['label'], editor)
+                editors[field['key']] = editor
+        ids = [spec['id'] for spec in PROVIDER_CATALOG]
+        current = str(settings.get('quota_provider') or DEFAULT_PROVIDER_ID)
+        combo.setCurrentIndex(ids.index(current) if current in ids else 0)
+        hint = QLabel()
+        hint.setWordWrap(True)
+        hint.setStyleSheet('color:#89958f;')
+
+        def sync(index):
+            spec = PROVIDER_CATALOG[index]
+            hint.setText(spec.get('hint') or '')
+            wanted = {field['key'] for field in spec['fields']}
+            for key, row in rows.items():
+                form.setRowVisible(row, key in wanted)
+
+        combo.currentIndexChanged.connect(sync)
+        layout.addLayout(form)
+        layout.addWidget(hint)
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        sync(combo.currentIndex())
+        if dialog.exec() != QDialog.Accepted:
+            return
+        update = {'quota_provider': combo.currentData()}
+        for field in PROVIDER_CATALOG[combo.currentIndex()].get('fields') or ():
+            update[field['key']] = editors[field['key']].text().strip()
+        write_settings(update)
+        if self.worker and QMessageBox.question(
+                self, '重启服务', '设置已保存，立即重启服务使其生效？') == QMessageBox.Yes:
+            self.wanted = True
+            self.worker.kill()
+
     def open_logs(self):
         directory = application_data_dir()
         directory.mkdir(parents=True, exist_ok=True)
@@ -380,8 +477,8 @@ class ReporterWindow(QWidget):
     def about(self):
         box = QMessageBox(self)
         box.setWindowTitle('关于作者')
-        box.setText('希娜 Syna · v1.0.0\n作者：黑沐')
-        box.setInformativeText('B 站 UID：386856267\nQQ：3091479711\n\n官方仓库：github.com/heimumumu/Waveshare_ESP32_RLCD\n发布下载：仓库 Releases 页面\n\nCopyright © 2026 黑沐\n原创部分采用 MIT；第三方组件保留各自授权。')
+        box.setText('希娜 Syna · v1.0.0\n作者：楠木')
+        box.setInformativeText('QQ/微信同号：157884200\n\n官方仓库：github.com/nanmu-self/Waveshare_ESP32_RLCD\n发布下载：仓库 Releases 页面\n\n基于黑沐的希娜 Syna 二次开发，原创部分采用 MIT；第三方组件保留各自授权。')
         repo = box.addButton('官方仓库', QMessageBox.ActionRole)
         releases = box.addButton('发布下载', QMessageBox.ActionRole)
         box.addButton('关闭', QMessageBox.RejectRole)
