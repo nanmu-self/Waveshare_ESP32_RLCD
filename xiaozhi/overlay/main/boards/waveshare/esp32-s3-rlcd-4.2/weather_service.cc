@@ -249,7 +249,7 @@ bool WeatherService::ResolveLocation(const Config& config, Location& location) {
     // 缓存有效期 24 小时，未过期直接使用，避免重复消耗定位与 GeoAPI 额度。
     if (LoadCachedLocation(location)) {
         int64_t cached_at_ms = 0;
-        ReadInt64("wifi-config", "wx-id-time", cached_at_ms);
+        ReadInt64("wifi-config", "wx-id-time2", cached_at_ms);
         if (cached_at_ms > 0 &&
             (int64_t)(esp_timer_get_time() / 1000) - cached_at_ms < kLocationCacheMs) {
             return true;
@@ -273,17 +273,17 @@ bool WeatherService::ResolveLocation(const Config& config, Location& location) {
 bool WeatherService::LoadCachedLocation(Location& location) const {
     std::string id;
     std::string name;
-    if (!ReadString("wifi-config", "wx-id", id) || id.empty()) return false;
-    ReadString("wifi-config", "wx-name", name);
+    if (!ReadString("wifi-config", "wx-id2", id) || id.empty()) return false;
+    ReadString("wifi-config", "wx-name2", name);
     location.id = id;
     location.name = name.empty() ? id : name;
     return true;
 }
 
 void WeatherService::SaveCachedLocation(const Location& location) const {
-    WriteString("wifi-config", "wx-id", location.id);
-    WriteString("wifi-config", "wx-name", location.name);
-    WriteInt64("wifi-config", "wx-id-time", esp_timer_get_time() / 1000);
+    WriteString("wifi-config", "wx-id2", location.id);
+    WriteString("wifi-config", "wx-name2", location.name);
+    WriteInt64("wifi-config", "wx-id-time2", esp_timer_get_time() / 1000);
 }
 
 // IP 定位：优先 ip-api.com（免费、含经纬度，可到区县级），失败退回
@@ -299,13 +299,20 @@ bool WeatherService::LocateByIp(std::string& query) {
             const cJSON* status = cJSON_GetObjectItemCaseSensitive(root, "status");
             const cJSON* lat = cJSON_GetObjectItemCaseSensitive(root, "lat");
             const cJSON* lon = cJSON_GetObjectItemCaseSensitive(root, "lon");
+            const cJSON* city = cJSON_GetObjectItemCaseSensitive(root, "city");
             if (cJSON_IsString(status) && status->valuestring != nullptr &&
-                strcmp(status->valuestring, "success") == 0 &&
-                cJSON_IsNumber(lat) && cJSON_IsNumber(lon)) {
-                char coordinate[40];
-                snprintf(coordinate, sizeof(coordinate), "%.2f,%.2f",
-                         lon->valuedouble, lat->valuedouble);
-                query = coordinate;
+                strcmp(status->valuestring, "success") == 0) {
+                // IP 定位坐标是运营商注册点，区级精度不可信；优先用市级名
+                // （"广州市"）查询，避免 GeoAPI 按坐标返回邻近区。
+                if (cJSON_IsString(city) && city->valuestring != nullptr &&
+                    city->valuestring[0] != '\0') {
+                    query = city->valuestring;
+                } else if (cJSON_IsNumber(lat) && cJSON_IsNumber(lon)) {
+                    char coordinate[40];
+                    snprintf(coordinate, sizeof(coordinate), "%.2f,%.2f",
+                             lon->valuedouble, lat->valuedouble);
+                    query = coordinate;
+                }
             }
             cJSON_Delete(root);
         }
