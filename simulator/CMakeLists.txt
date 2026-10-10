@@ -22,6 +22,7 @@ target_link_libraries(lvgl PUBLIC SDL2::SDL2)
 add_executable(ai_panel_simulator
     src/main.c
     src/ui/ui.c
+    src/ui/lunar.cc
     src/assets/ui_screen_base.c
     src/assets/ui_performance_base.c
     src/assets/ui_syna_base.c
@@ -45,6 +46,7 @@ add_executable(ai_panel_simulator
     src/assets/ui_font_14_regular.c
     src/assets/ui_font_14_cjk.c
     src/assets/ui_font_11_cjk.c
+    src/assets/ui_font_9_cjk.c
     src/assets/ui_font_28_brand.c
     src/assets/ui_font_40_regular.c
     src/assets/ui_font_40_bold.c

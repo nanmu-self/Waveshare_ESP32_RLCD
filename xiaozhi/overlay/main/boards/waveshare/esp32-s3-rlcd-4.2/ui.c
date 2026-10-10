@@ -9,6 +9,7 @@
 
 #include "lvgl.h"
 #include "assets.h"
+#include "lunar.h"
 #include "ui_fonts.h"
 
 #ifdef ESP_PLATFORM
@@ -84,11 +85,18 @@ static computer_t computers[] = {
 #define CALENDAR_ROWS 6
 #define CALENDAR_LEFT 184
 #define CALENDAR_COLUMN_WIDTH 29
-#define CALENDAR_RULE_TOP_Y 96
-#define CALENDAR_HEADER_Y 98
-#define CALENDAR_RULE_MID_Y 114
-#define CALENDAR_FIRST_ROW_Y 117
-#define CALENDAR_ROW_HEIGHT 21
+#define CALENDAR_RULE_TOP_Y 92
+#define CALENDAR_HEADER_Y 94
+#define CALENDAR_RULE_MID_Y 107
+/* 网格顶/底：卡内可用纵向范围（边框内留 2px）。
+ * 行高不写死，改为按本月实际行数摊满这段高度 —— 跨 5 周的月份行距自然更大，
+ * 不再在卡片底部留一截空白。 */
+#define CALENDAR_GRID_TOP 110
+#define CALENDAR_GRID_BOTTOM 247
+#define CALENDAR_MIN_ROW_HEIGHT 23   /* 6 行月份保持现在的紧凑度 */
+#define CALENDAR_MAX_BLOCK_TOP 5     /* 行高过剩时数字块最多下沉这么多 */
+#define CALENDAR_DAYS_IN_BLOCK 21    /* 数字 10px + 间隙 2px + 农历 9px */
+#define CALENDAR_LUNAR_FONT ui_font_9_cjk
 
 static page_t current_page = PAGE_DASHBOARD;
 static int current_computer = 0;
@@ -126,12 +134,14 @@ static lv_obj_t *dashboard_calendar_prev_label;
 static lv_obj_t *dashboard_calendar_next_label;
 static lv_obj_t *dashboard_calendar_headers[CALENDAR_COLUMNS];
 static lv_obj_t *dashboard_calendar_days[CALENDAR_ROWS * CALENDAR_COLUMNS];
+static lv_obj_t *dashboard_calendar_lunar[CALENDAR_ROWS * CALENDAR_COLUMNS];
 static lv_obj_t *dashboard_calendar_today_highlight;
 static int dashboard_calendar_month_offset = 0;
 static int dashboard_calendar_rendered_year = -1;
 static int dashboard_calendar_rendered_month = -1;
 static int dashboard_calendar_rendered_day = -1;
 static int dashboard_calendar_rendered_offset = 0x7FFFFFFF;
+static int calendar_row_height = CALENDAR_MIN_ROW_HEIGHT;
 static lv_timer_t *agent_done_blink_timer;
 static lv_obj_t *performance_temperature_labels[2];
 static lv_obj_t *performance_usage_labels[4];
@@ -486,24 +496,62 @@ static void refresh_dashboard_calendar(bool force)
 
     const int first_weekday = clock_valid ? weekday_of(year, month, 1) : 0;
     const int day_count = days_in_month(year, month);
+    /* 本月实际跨几周，行高按它摊满可用高度；行数少时行距自动变大。 */
+    int rows_used = clock_valid
+        ? (first_weekday + day_count + CALENDAR_COLUMNS - 1) / CALENDAR_COLUMNS
+        : CALENDAR_ROWS;
+    if(rows_used < 1) rows_used = 1;
+    int row_height = (CALENDAR_GRID_BOTTOM + 1 - CALENDAR_GRID_TOP) / rows_used;
+    if(row_height < CALENDAR_MIN_ROW_HEIGHT) row_height = CALENDAR_MIN_ROW_HEIGHT;
+    /* 数字块在行内垂直居中，剩余留白都放在块与下一行之间。 */
+    int block_top = row_height > CALENDAR_DAYS_IN_BLOCK
+        ? (row_height - CALENDAR_DAYS_IN_BLOCK) / 2 : 0;
+    if(block_top > CALENDAR_MAX_BLOCK_TOP) block_top = CALENDAR_MAX_BLOCK_TOP;
+    calendar_row_height = row_height;
     int today_row = -1;
     int today_column = -1;
 
     for(int index = 0; index < CALENDAR_ROWS * CALENDAR_COLUMNS; ++index) {
-        lv_obj_t *label = dashboard_calendar_days[index];
-        if(label == NULL || !lv_obj_is_valid(label)) continue;
+        lv_obj_t *day_label = dashboard_calendar_days[index];
+        lv_obj_t *lunar_label = dashboard_calendar_lunar[index];
+        if(day_label == NULL || !lv_obj_is_valid(day_label)) continue;
+        const int column = index % CALENDAR_COLUMNS;
+        const int row = index / CALENDAR_COLUMNS;
+        /* 行高随月份变：数字块在行内垂直居中，必须每次重新摆位。 */
+        const int cell_x = CALENDAR_LEFT + column * CALENDAR_COLUMN_WIDTH;
+        const int cell_y = CALENDAR_GRID_TOP + row * row_height;
+        lv_obj_set_pos(day_label, cell_x, cell_y + block_top - 2);
+        lv_obj_set_pos(lunar_label, cell_x, cell_y + block_top + 14);
         const int day = index - first_weekday + 1;
         const bool in_month = clock_valid && day >= 1 && day <= day_count;
         if(!in_month) {
-            if(lv_label_get_text(label)[0] != '\0') lv_label_set_text(label, "");
-            lv_obj_set_style_text_color(label, COLOR_BLACK, 0);
+            if(lv_label_get_text(day_label)[0] != '\0') lv_label_set_text(day_label, "");
+            lv_obj_set_style_text_color(day_label, COLOR_BLACK, 0);
+            if(lunar_label != NULL && lv_obj_is_valid(lunar_label) &&
+               lv_label_get_text(lunar_label)[0] != '\0') {
+                lv_label_set_text(lunar_label, "");
+            }
             continue;
         }
         const bool is_today = day == today_day && month == today_month &&
                               year == today_year;
         snprintf(text, sizeof(text), "%d", day);
-        if(strcmp(lv_label_get_text(label), text) != 0) lv_label_set_text(label, text);
-        lv_obj_set_style_text_color(label, is_today ? COLOR_WHITE : COLOR_BLACK, 0);
+        if(strcmp(lv_label_get_text(day_label), text) != 0) lv_label_set_text(day_label, text);
+        lv_obj_set_style_text_color(day_label, is_today ? COLOR_WHITE : COLOR_BLACK, 0);
+        /* 农历名与格里日一一对齐；换算失败（超出 1900-2100）就留空。 */
+        if(lunar_label != NULL && lv_obj_is_valid(lunar_label)) {
+            if(clock_valid && syna_lunar_day(year, month, day, text, sizeof(text))) {
+                if(strcmp(lv_label_get_text(lunar_label), text) != 0) {
+                    lv_label_set_text(lunar_label, text);
+                }
+                /* 今天整格都是反色（数字+农历一起白字），其余日子仍为黑字。 */
+                lv_obj_set_style_text_color(lunar_label,
+                                            is_today ? COLOR_WHITE : COLOR_BLACK, 0);
+            }
+            else if(lv_label_get_text(lunar_label)[0] != '\0') {
+                lv_label_set_text(lunar_label, "");
+            }
+        }
         if(is_today) {
             today_row = index / CALENDAR_COLUMNS;
             today_column = index % CALENDAR_COLUMNS;
@@ -511,9 +559,10 @@ static void refresh_dashboard_calendar(bool force)
     }
 
     if(today_row >= 0) {
+        lv_obj_set_size(dashboard_calendar_today_highlight, 25, row_height);
         lv_obj_set_pos(dashboard_calendar_today_highlight,
-                       CALENDAR_LEFT + today_column * CALENDAR_COLUMN_WIDTH + 3,
-                       CALENDAR_FIRST_ROW_Y + today_row * CALENDAR_ROW_HEIGHT + 1);
+                       CALENDAR_LEFT + today_column * CALENDAR_COLUMN_WIDTH + 2,
+                       CALENDAR_GRID_TOP + today_row * row_height);
         lv_obj_remove_flag(dashboard_calendar_today_highlight, LV_OBJ_FLAG_HIDDEN);
     }
     else {
@@ -599,22 +648,22 @@ void ui_show_dashboard(void)
     make_white_mask(screen, 184, 74, 204, 172);
 
     dashboard_calendar_prev_label = make_label(
-        screen, LV_SYMBOL_LEFT, &lv_font_montserrat_14, CALENDAR_LEFT, 78);
+        screen, LV_SYMBOL_LEFT, &lv_font_montserrat_14, CALENDAR_LEFT, 76);
     lv_obj_set_size(dashboard_calendar_prev_label, 14, 16);
     lv_obj_set_style_text_align(dashboard_calendar_prev_label,
                                 LV_TEXT_ALIGN_CENTER, 0);
     dashboard_calendar_month_label = make_label(
-        screen, "----", &ui_font_14_cjk, 200, 75);
+        screen, "----", &ui_font_14_cjk, 200, 73);
     lv_obj_set_size(dashboard_calendar_month_label, 104, 20);
     lv_obj_set_style_text_align(dashboard_calendar_month_label,
                                 LV_TEXT_ALIGN_CENTER, 0);
     dashboard_calendar_next_label = make_label(
-        screen, LV_SYMBOL_RIGHT, &lv_font_montserrat_14, 306, 78);
+        screen, LV_SYMBOL_RIGHT, &lv_font_montserrat_14, 306, 76);
     lv_obj_set_size(dashboard_calendar_next_label, 14, 16);
     lv_obj_set_style_text_align(dashboard_calendar_next_label,
                                 LV_TEXT_ALIGN_CENTER, 0);
     dashboard_calendar_weekday_label = make_label(
-        screen, "--", &ui_font_14_cjk, 324, 75);
+        screen, "--", &ui_font_14_cjk, 324, 73);
     lv_obj_set_size(dashboard_calendar_weekday_label, 62, 20);
     lv_obj_set_style_text_align(dashboard_calendar_weekday_label,
                                 LV_TEXT_ALIGN_RIGHT, 0);
@@ -637,24 +686,33 @@ void ui_show_dashboard(void)
     /* 今日反色块先建，日期标签后建，保证标签压在色块之上。 */
     dashboard_calendar_today_highlight = lv_obj_create(screen);
     lv_obj_remove_flag(dashboard_calendar_today_highlight, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_size(dashboard_calendar_today_highlight, 23, 19);
-    lv_obj_set_style_radius(dashboard_calendar_today_highlight, 4, 0);
+    lv_obj_set_size(dashboard_calendar_today_highlight, 25, 23);
+    lv_obj_set_style_radius(dashboard_calendar_today_highlight, 3, 0);
     lv_obj_set_style_border_width(dashboard_calendar_today_highlight, 0, 0);
     lv_obj_set_style_pad_all(dashboard_calendar_today_highlight, 0, 0);
     lv_obj_set_style_bg_color(dashboard_calendar_today_highlight, COLOR_BLACK, 0);
     lv_obj_set_style_bg_opa(dashboard_calendar_today_highlight, LV_OPA_COVER, 0);
     lv_obj_add_flag(dashboard_calendar_today_highlight, LV_OBJ_FLAG_HIDDEN);
 
+    /* 数字块（数字+2px+农历）在行内居中；标签位置由 refresh 按实际行高摆放。 */
+    const int block_top = (CALENDAR_MIN_ROW_HEIGHT > CALENDAR_DAYS_IN_BLOCK)
+        ? (CALENDAR_MIN_ROW_HEIGHT - CALENDAR_DAYS_IN_BLOCK) / 2 : 0;
     for(int index = 0; index < CALENDAR_ROWS * CALENDAR_COLUMNS; ++index) {
         const int column = index % CALENDAR_COLUMNS;
         const int row = index / CALENDAR_COLUMNS;
+        const int cell_x = CALENDAR_LEFT + column * CALENDAR_COLUMN_WIDTH;
+        const int cell_y = CALENDAR_GRID_TOP + row * CALENDAR_MIN_ROW_HEIGHT;
         dashboard_calendar_days[index] = make_label(
-            screen, "", &ui_font_14_regular,
-            CALENDAR_LEFT + column * CALENDAR_COLUMN_WIDTH,
-            CALENDAR_FIRST_ROW_Y + row * CALENDAR_ROW_HEIGHT + 2);
+            screen, "", &ui_font_14_regular, cell_x, cell_y + block_top - 2);
         lv_obj_set_size(dashboard_calendar_days[index],
                         CALENDAR_COLUMN_WIDTH, 17);
         lv_obj_set_style_text_align(dashboard_calendar_days[index],
+                                    LV_TEXT_ALIGN_CENTER, 0);
+        dashboard_calendar_lunar[index] = make_label(
+            screen, "", &CALENDAR_LUNAR_FONT, cell_x, cell_y + block_top + 14);
+        lv_obj_set_size(dashboard_calendar_lunar[index],
+                        CALENDAR_COLUMN_WIDTH, 14);
+        lv_obj_set_style_text_align(dashboard_calendar_lunar[index],
                                     LV_TEXT_ALIGN_CENTER, 0);
     }
 
