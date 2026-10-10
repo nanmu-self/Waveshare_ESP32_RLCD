@@ -520,8 +520,8 @@ void ui_show_dashboard(void)
             screen, kQuotaCaptions[index], &ui_font_14_cjk, 19, row_y);
         lv_obj_t *track = lv_obj_create(screen);
         lv_obj_remove_flag(track, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_pos(track, 46, row_y + 8);
-        lv_obj_set_size(track, 40, 5);
+        lv_obj_set_pos(track, 40, row_y + 8);
+        lv_obj_set_size(track, 32, 5);
         lv_obj_set_style_radius(track, 1, 0);
         lv_obj_set_style_border_width(track, 1, 0);
         lv_obj_set_style_border_color(track, COLOR_BLACK, 0);
@@ -540,13 +540,13 @@ void ui_show_dashboard(void)
         lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
         dashboard_quota_fill[index] = fill;
         dashboard_quota_percent[index] = make_label(
-            screen, "--", &ui_font_14_regular, 84, row_y + 1);
-        lv_obj_set_width(dashboard_quota_percent[index], 42);
+            screen, "--", &ui_font_14_regular, 74, row_y + 1);
+        lv_obj_set_width(dashboard_quota_percent[index], 40);
         lv_obj_set_style_text_align(dashboard_quota_percent[index],
                                     LV_TEXT_ALIGN_RIGHT, 0);
         dashboard_quota_countdown[index] = make_label(
-            screen, "", &ui_font_14_cjk, 130, row_y + 1);
-        lv_obj_set_width(dashboard_quota_countdown[index], 34);
+            screen, "", &ui_font_14_cjk, 116, row_y + 1);
+        lv_obj_set_width(dashboard_quota_countdown[index], 52);
         lv_obj_set_style_text_align(dashboard_quota_countdown[index],
                                     LV_TEXT_ALIGN_RIGHT, 0);
     }
@@ -1592,7 +1592,8 @@ static void format_quota_countdown(char *buffer, size_t size, int32_t resets_in)
         snprintf(buffer, size, "%dd%dh", (int)days, hours);
         return;
     }
-    snprintf(buffer, size, "%dh", (int)(diff / (60 * 60)));
+    int minutes = (int)((diff % (60 * 60)) / 60);
+    snprintf(buffer, size, "%dh%dm", hours, minutes);
 }
 
 void ui_update_codex_quota(int short_remaining_percent, int week_remaining_percent,
@@ -1615,7 +1616,7 @@ void ui_update_codex_quota(int short_remaining_percent, int week_remaining_perce
         if(dashboard_quota_fill[index] != NULL &&
            lv_obj_is_valid(dashboard_quota_fill[index])) {
             if(valid && values[index] > 0) {
-                lv_obj_set_width(dashboard_quota_fill[index], (38 * values[index]) / 100);
+                lv_obj_set_width(dashboard_quota_fill[index], (30 * values[index]) / 100);
                 lv_obj_remove_flag(dashboard_quota_fill[index], LV_OBJ_FLAG_HIDDEN);
             }
             else {

@@ -31,14 +31,16 @@ int main() {
  assert(objs[6].text=="--" && objs[7].text=="~64%" && objs[8].text=="--");
  assert(objs[3].hidden && objs[4].hidden && objs[5].hidden);
  assert(objs[12].hidden && !objs[13].hidden && objs[14].hidden);
- assert(objs[13].width == 24);
+ assert(objs[13].width == 19);
  ui_update_codex_quota(0,100,50,true,true, 31*60, (2*24+9)*3600, (1*24+9)*3600);
  assert(objs[6].text=="~0%" && objs[7].text=="~100%" && objs[8].text=="~50%");
  assert(objs[12].hidden && !objs[13].hidden && !objs[14].hidden);
- assert(objs[13].width == 38 && objs[14].width == 19);
+ assert(objs[13].width == 30 && objs[14].width == 15);
  assert(objs[3].text=="31m");
  assert(objs[4].text=="2d9h");
  assert(objs[5].text=="1d9h");
+ ui_update_codex_quota(50,60,70,true,false, 4*3600+25*60, -1, -1);
+ assert(objs[3].text=="4h25m" && objs[4].hidden);
  ui_update_codex_quota(10,60,70,true,false, 0,0,0);
  assert(objs[6].text=="10%" && objs[7].text=="60%" && objs[8].text=="70%");
  assert(objs[3].hidden && objs[4].hidden && objs[5].hidden);
@@ -57,7 +59,7 @@ def main():
     offsets = [int(x) for x in re.findall(r'\d+', re.search(r'unicode_list\[\]\s*=\s*\{(.*?)\}', font, re.S)[1])]
     advances = [int(x) / 16 for x in re.findall(r'\.adv_w=(\d+)', font)]
     width = sum(advances[offsets.index(ord(c)-32)+1] for c in '~100%')
-    assert width <= 42, f'Cached quota text exceeds label width: {width}'
+    assert width <= 40, f'Cached quota text exceeds label width: {width}'
     print('Maximum cached quota advance:', width)
     with tempfile.TemporaryDirectory(prefix='syna-quota-', ignore_cleanup_errors=True) as tmp:
         directory = Path(tmp)
