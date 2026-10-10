@@ -188,11 +188,6 @@ int main(void)
         {.id = 4, .text = "测试语音待办", .completed = false},
     };
     ui_update_todos(todo_demo, 4);
-    const char *media_demo = getenv("AI_PANEL_MEDIA_DEMO");
-    if(media_demo != NULL && strcmp(media_demo, "1") == 0) {
-        ui_update_media(true, "playing", "Ring of Coins", "Lindsey Stirling",
-                        114, 271, "纯音乐，请欣赏");
-    }
     const char *start_page = getenv("AI_PANEL_START_PAGE");
     if(start_page != NULL && strcmp(start_page, "computers") == 0) ui_show_computers();
     else if(start_page != NULL && strcmp(start_page, "performance") == 0) {

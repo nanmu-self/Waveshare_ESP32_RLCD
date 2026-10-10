@@ -86,9 +86,8 @@ void ui_update_codex_quota(int short_remaining_percent, int week_remaining_perce
                            int month_remaining_percent, bool connected, bool stale,
                            int32_t short_resets_in, int32_t week_resets_in,
                            int32_t month_resets_in);
-void ui_update_media(bool available, const char *status, const char *title,
-                     const char *artist, int position_seconds,
-                     int duration_seconds, const char *lyric);
+/* 主页日历卡片翻月（delta 为月数，0 回到本月）；仅主页生效。 */
+void ui_calendar_step(int delta);
 void ui_show_assistant_overlay(const char *state, const char *text);
 void ui_hide_assistant_overlay(void);
 void ui_update_syna_conversation(const char *user_text,

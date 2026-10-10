@@ -155,7 +155,6 @@ void CustomLcdDisplay::SetupUI() {
     ui_update_agent_state("OFFLINE");
     ui_update_api_balance("API", "--");
     ui_update_codex_quota(-1, -1, -1, false, false, -1, -1, -1);
-    ui_update_media(false, "stopped", "", "", 0, 0, "");
     ui_update_performance(0, 0, 0, false, 0, 0, false, 0, false,
                           0, 0, 0, false);
     ui_update_pc_connected(false);
@@ -185,6 +184,12 @@ bool CustomLcdDisplay::ShowPanelPage(const std::string& page) {
     else if (page == "computers") ui_show_computers();
     else return false;
     return true;
+}
+
+void CustomLcdDisplay::StepPanelCalendar(int delta) {
+    if (!panel_ui_ready_) return;
+    DisplayLockGuard lock(this);
+    ui_calendar_step(delta);
 }
 
 void CustomLcdDisplay::HandlePanelKeyShortPress() {
@@ -317,12 +322,6 @@ void CustomLcdDisplay::UpdateStatusBar(bool update_all) {
                               metrics.codex_short_resets_in,
                               metrics.codex_week_resets_in,
                               metrics.codex_month_resets_in);
-        ui_update_media(metrics.connected && metrics.media_available,
-                        metrics.media_status, metrics.media_title,
-                        metrics.media_artist,
-                        static_cast<int>(metrics.media_position_seconds),
-                        static_cast<int>(metrics.media_duration_seconds),
-                        metrics.media_lyric);
         ui_update_performance(
             metrics.cpu_percent, metrics.memory_percent,
             metrics.gpu_percent, metrics.gpu_valid,

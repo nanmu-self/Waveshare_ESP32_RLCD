@@ -27,6 +27,8 @@ typedef enum {
 
 static const char *const kWeekdayNames[] = {"周日", "周一", "周二", "周三",
                                            "周四", "周五", "周六"};
+/* 日历星期表头，与 tm_wday 同序（周日开头）。 */
+static const char *const kCalendarHeaderNames[] = {"日", "一", "二", "三", "四", "五", "六"};
 
 /* Defined near the About page; used by the weather bottom bar too. */
 static bool station_ip_text(char *buf, size_t len);
@@ -97,6 +99,17 @@ static computer_t computers[] = {
 #define COLOR_BLACK lv_color_black()
 #define COLOR_WHITE lv_color_white()
 
+/* 首页日历卡片：替换底图里蚀刻的音乐区（x 178..393，y 69..250）。 */
+#define CALENDAR_COLUMNS 7
+#define CALENDAR_ROWS 6
+#define CALENDAR_LEFT 184
+#define CALENDAR_COLUMN_WIDTH 29
+#define CALENDAR_RULE_TOP_Y 96
+#define CALENDAR_HEADER_Y 98
+#define CALENDAR_RULE_MID_Y 114
+#define CALENDAR_FIRST_ROW_Y 117
+#define CALENDAR_ROW_HEIGHT 21
+
 static page_t current_page = PAGE_DASHBOARD;
 static int current_computer = 0;
 static int current_list_computer = 0;
@@ -131,13 +144,18 @@ static lv_obj_t *dashboard_quota_countdown[3];
 static lv_obj_t *dashboard_quota_percent[3];
 static lv_obj_t *dashboard_quota_track[3];
 static lv_obj_t *dashboard_quota_fill[3];
-static lv_obj_t *dashboard_media_status_label;
-static lv_obj_t *dashboard_media_title_label;
-static lv_obj_t *dashboard_media_artist_label;
-static lv_obj_t *dashboard_media_position_label;
-static lv_obj_t *dashboard_media_duration_label;
-static lv_obj_t *dashboard_media_lyric_label;
-static lv_obj_t *dashboard_media_progress_knob;
+static lv_obj_t *dashboard_calendar_month_label;
+static lv_obj_t *dashboard_calendar_weekday_label;
+static lv_obj_t *dashboard_calendar_prev_label;
+static lv_obj_t *dashboard_calendar_next_label;
+static lv_obj_t *dashboard_calendar_headers[CALENDAR_COLUMNS];
+static lv_obj_t *dashboard_calendar_days[CALENDAR_ROWS * CALENDAR_COLUMNS];
+static lv_obj_t *dashboard_calendar_today_highlight;
+static int dashboard_calendar_month_offset = 0;
+static int dashboard_calendar_rendered_year = -1;
+static int dashboard_calendar_rendered_month = -1;
+static int dashboard_calendar_rendered_day = -1;
+static int dashboard_calendar_rendered_offset = 0x7FFFFFFF;
 static lv_timer_t *agent_done_blink_timer;
 static lv_obj_t *performance_temperature_labels[2];
 static lv_obj_t *performance_usage_labels[4];
@@ -203,6 +221,7 @@ static void computer_row_clicked(lv_event_t *event);
 static void sync_assistant_visibility(void);
 static void refresh_syna_conversation(void);
 static void refresh_syna_todos(void);
+static void refresh_dashboard_calendar(bool force);
 
 static void update_battery_labels(void)
 {
@@ -412,12 +431,138 @@ static lv_obj_t *make_white_mask(lv_obj_t *parent, int x, int y, int width, int 
     return mask;
 }
 
+/* 1px 细分隔线（日历标题栏与星期表头下方）。1-bit 屏没有灰色，只能靠线区分层级。 */
+static void make_rule(lv_obj_t *parent, int x, int y, int width)
+{
+    lv_obj_t *rule = lv_obj_create(parent);
+    lv_obj_remove_flag(rule, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_pos(rule, x, y);
+    lv_obj_set_size(rule, width, 1);
+    lv_obj_set_style_radius(rule, 0, 0);
+    lv_obj_set_style_border_width(rule, 0, 0);
+    lv_obj_set_style_pad_all(rule, 0, 0);
+    lv_obj_set_style_bg_color(rule, COLOR_BLACK, 0);
+    lv_obj_set_style_bg_opa(rule, LV_OPA_COVER, 0);
+}
+
+static bool is_leap_year(int year)
+{
+    return (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+}
+
+static int days_in_month(int year, int month)
+{
+    static const int kDays[] = {31, 28, 31, 30, 31, 30,
+                                31, 31, 30, 31, 30, 31};
+    if(month < 1 || month > 12) return 30;
+    if(month == 2 && is_leap_year(year)) return 29;
+    return kDays[month - 1];
+}
+
+/* Sakamoto 算法；返回值 0=周日，与 tm_wday 一致。 */
+static int weekday_of(int year, int month, int day)
+{
+    static const int kTable[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
+    if(month < 3) year -= 1;
+    return (year + year / 4 - year / 100 + year / 400 +
+            kTable[month - 1] + day) % 7;
+}
+
+static void refresh_dashboard_calendar(bool force)
+{
+    if(dashboard_calendar_days[0] == NULL ||
+       !lv_obj_is_valid(dashboard_calendar_days[0])) return;
+
+    time_t now = time(NULL);
+    struct tm *converted = localtime(&now);
+    if(converted == NULL) return;
+    const struct tm local = *converted;
+
+    const int today_year = local.tm_year + 1900;
+    const int today_month = local.tm_mon + 1;
+    const int today_day = local.tm_mday;
+    /* 未校时前 time() 停在 1970，宁可不显示也不要画错日期。 */
+    const bool clock_valid = today_year >= 2020;
+
+    int year = today_year;
+    int month = today_month + dashboard_calendar_month_offset;
+    while(month > 12) { month -= 12; ++year; }
+    while(month < 1) { month += 12; --year; }
+
+    if(!force && year == dashboard_calendar_rendered_year &&
+       month == dashboard_calendar_rendered_month &&
+       today_day == dashboard_calendar_rendered_day &&
+       dashboard_calendar_month_offset == dashboard_calendar_rendered_offset) {
+        return;
+    }
+    dashboard_calendar_rendered_year = year;
+    dashboard_calendar_rendered_month = month;
+    dashboard_calendar_rendered_day = today_day;
+    dashboard_calendar_rendered_offset = dashboard_calendar_month_offset;
+
+    char text[32];
+    if(clock_valid) snprintf(text, sizeof(text), "%d年 %d月", year, month);
+    else snprintf(text, sizeof(text), "----");
+    lv_label_set_text(dashboard_calendar_month_label, text);
+
+    snprintf(text, sizeof(text), "%s", clock_valid ? kWeekdayNames[local.tm_wday] : "--");
+    lv_label_set_text(dashboard_calendar_weekday_label, text);
+
+    const int first_weekday = clock_valid ? weekday_of(year, month, 1) : 0;
+    const int day_count = days_in_month(year, month);
+    int today_row = -1;
+    int today_column = -1;
+
+    for(int index = 0; index < CALENDAR_ROWS * CALENDAR_COLUMNS; ++index) {
+        lv_obj_t *label = dashboard_calendar_days[index];
+        if(label == NULL || !lv_obj_is_valid(label)) continue;
+        const int day = index - first_weekday + 1;
+        const bool in_month = clock_valid && day >= 1 && day <= day_count;
+        if(!in_month) {
+            if(lv_label_get_text(label)[0] != '\0') lv_label_set_text(label, "");
+            lv_obj_set_style_text_color(label, COLOR_BLACK, 0);
+            continue;
+        }
+        const bool is_today = day == today_day && month == today_month &&
+                              year == today_year;
+        snprintf(text, sizeof(text), "%d", day);
+        if(strcmp(lv_label_get_text(label), text) != 0) lv_label_set_text(label, text);
+        lv_obj_set_style_text_color(label, is_today ? COLOR_WHITE : COLOR_BLACK, 0);
+        if(is_today) {
+            today_row = index / CALENDAR_COLUMNS;
+            today_column = index % CALENDAR_COLUMNS;
+        }
+    }
+
+    if(today_row >= 0) {
+        lv_obj_set_pos(dashboard_calendar_today_highlight,
+                       CALENDAR_LEFT + today_column * CALENDAR_COLUMN_WIDTH + 3,
+                       CALENDAR_FIRST_ROW_Y + today_row * CALENDAR_ROW_HEIGHT + 1);
+        lv_obj_remove_flag(dashboard_calendar_today_highlight, LV_OBJ_FLAG_HIDDEN);
+    }
+    else {
+        lv_obj_add_flag(dashboard_calendar_today_highlight, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void ui_calendar_step(int delta)
+{
+    if(current_page != PAGE_DASHBOARD) return;
+    int offset = dashboard_calendar_month_offset + delta;
+    if(offset > 24) offset = 24;
+    if(offset < -24) offset = -24;
+    dashboard_calendar_month_offset = offset;
+    refresh_dashboard_calendar(true);
+}
+
 void ui_show_dashboard(void)
 {
     current_page = PAGE_DASHBOARD;
     sync_assistant_visibility();
     if(dashboard_screen != NULL) {
         clock_label = dashboard_clock_label;
+        dashboard_calendar_month_offset = 0;
+        refresh_dashboard_calendar(true);
         lv_screen_load(dashboard_screen);
         ui_update_clock();
         return;
@@ -473,57 +618,69 @@ void ui_show_dashboard(void)
     lv_obj_set_style_bg_color(agent_status_mask, COLOR_WHITE, 0);
     lv_obj_set_style_bg_opa(agent_status_mask, LV_OPA_COVER, 0);
 
-    make_white_mask(screen, 221, 81, 78, 20);
-    make_white_mask(screen, 255, 115, 127, 23);
-    make_white_mask(screen, 276, 140, 106, 20);
-    make_white_mask(screen, 268, 176, 9, 10);
-    make_white_mask(screen, 192, 188, 43, 17);
-    make_white_mask(screen, 347, 188, 37, 17);
-    make_white_mask(screen, 190, 212, 192, 34);
+    /* 日历卡片：底图里蚀刻的音乐元素（波形、专辑盒、音符、虚线进度、歌词）
+     * 整块遮白，只保留卡片的圆角边框。 */
+    make_white_mask(screen, 184, 74, 204, 172);
 
-    dashboard_media_status_label = make_label(
-        screen, "未播放", &ui_font_14_cjk, 222, 82);
-    lv_obj_set_size(dashboard_media_status_label, 77, 18);
-    dashboard_media_title_label = make_label(
-        screen, "网易云音乐", &ui_font_14_cjk, 257, 116);
-    lv_label_set_long_mode(dashboard_media_title_label, LV_LABEL_LONG_CLIP);
-    lv_obj_set_size(dashboard_media_title_label, 124, 18);
-    dashboard_media_artist_label = make_label(
-        screen, "--", &ui_font_14_cjk, 277, 141);
-    lv_label_set_long_mode(dashboard_media_artist_label, LV_LABEL_LONG_CLIP);
-    lv_obj_set_size(dashboard_media_artist_label, 104, 18);
-    dashboard_media_position_label = make_label(
-        screen, "--:--", &ui_font_11_regular, 193, 189);
-    dashboard_media_duration_label = make_label(
-        screen, "--:--", &ui_font_11_regular, 349, 189);
-    lv_obj_set_width(dashboard_media_duration_label, 34);
-    lv_obj_set_style_text_align(dashboard_media_duration_label, LV_TEXT_ALIGN_RIGHT, 0);
-    dashboard_media_lyric_label = make_label(
-        screen, "暂无歌词", &ui_font_14_cjk, 191, 216);
-    lv_label_set_long_mode(dashboard_media_lyric_label, LV_LABEL_LONG_CLIP);
-    lv_obj_set_size(dashboard_media_lyric_label, 190, 20);
-    lv_obj_set_style_text_align(dashboard_media_lyric_label, LV_TEXT_ALIGN_CENTER, 0);
+    dashboard_calendar_prev_label = make_label(
+        screen, LV_SYMBOL_LEFT, &lv_font_montserrat_14, CALENDAR_LEFT, 78);
+    lv_obj_set_size(dashboard_calendar_prev_label, 14, 16);
+    lv_obj_set_style_text_align(dashboard_calendar_prev_label,
+                                LV_TEXT_ALIGN_CENTER, 0);
+    dashboard_calendar_month_label = make_label(
+        screen, "----", &ui_font_14_cjk, 200, 75);
+    lv_obj_set_size(dashboard_calendar_month_label, 104, 20);
+    lv_obj_set_style_text_align(dashboard_calendar_month_label,
+                                LV_TEXT_ALIGN_CENTER, 0);
+    dashboard_calendar_next_label = make_label(
+        screen, LV_SYMBOL_RIGHT, &lv_font_montserrat_14, 306, 78);
+    lv_obj_set_size(dashboard_calendar_next_label, 14, 16);
+    lv_obj_set_style_text_align(dashboard_calendar_next_label,
+                                LV_TEXT_ALIGN_CENTER, 0);
+    dashboard_calendar_weekday_label = make_label(
+        screen, "--", &ui_font_14_cjk, 324, 75);
+    lv_obj_set_size(dashboard_calendar_weekday_label, 62, 20);
+    lv_obj_set_style_text_align(dashboard_calendar_weekday_label,
+                                LV_TEXT_ALIGN_RIGHT, 0);
 
-    for(int dot = 0; dot < 3; ++dot) {
-        lv_obj_t *progress_patch = lv_obj_create(screen);
-        lv_obj_remove_flag(progress_patch, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_pos(progress_patch, 269 + dot * 3, 180);
-        lv_obj_set_size(progress_patch, 2, 1);
-        lv_obj_set_style_radius(progress_patch, 0, 0);
-        lv_obj_set_style_border_width(progress_patch, 0, 0);
-        lv_obj_set_style_pad_all(progress_patch, 0, 0);
-        lv_obj_set_style_bg_color(progress_patch, COLOR_BLACK, 0);
-        lv_obj_set_style_bg_opa(progress_patch, LV_OPA_COVER, 0);
+    make_rule(screen, CALENDAR_LEFT, CALENDAR_RULE_TOP_Y,
+              CALENDAR_COLUMNS * CALENDAR_COLUMN_WIDTH - 1);
+
+    for(int column = 0; column < CALENDAR_COLUMNS; ++column) {
+        dashboard_calendar_headers[column] = make_label(
+            screen, kCalendarHeaderNames[column], &ui_font_11_cjk,
+            CALENDAR_LEFT + column * CALENDAR_COLUMN_WIDTH, CALENDAR_HEADER_Y);
+        lv_obj_set_size(dashboard_calendar_headers[column],
+                        CALENDAR_COLUMN_WIDTH, 14);
+        lv_obj_set_style_text_align(dashboard_calendar_headers[column],
+                                    LV_TEXT_ALIGN_CENTER, 0);
     }
-    dashboard_media_progress_knob = lv_obj_create(screen);
-    lv_obj_remove_flag(dashboard_media_progress_knob, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_pos(dashboard_media_progress_knob, 191, 178);
-    lv_obj_set_size(dashboard_media_progress_knob, 5, 5);
-    lv_obj_set_style_radius(dashboard_media_progress_knob, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_border_width(dashboard_media_progress_knob, 0, 0);
-    lv_obj_set_style_pad_all(dashboard_media_progress_knob, 0, 0);
-    lv_obj_set_style_bg_color(dashboard_media_progress_knob, COLOR_BLACK, 0);
-    lv_obj_set_style_bg_opa(dashboard_media_progress_knob, LV_OPA_COVER, 0);
+    make_rule(screen, CALENDAR_LEFT, CALENDAR_RULE_MID_Y,
+              CALENDAR_COLUMNS * CALENDAR_COLUMN_WIDTH - 1);
+
+    /* 今日反色块先建，日期标签后建，保证标签压在色块之上。 */
+    dashboard_calendar_today_highlight = lv_obj_create(screen);
+    lv_obj_remove_flag(dashboard_calendar_today_highlight, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(dashboard_calendar_today_highlight, 23, 19);
+    lv_obj_set_style_radius(dashboard_calendar_today_highlight, 4, 0);
+    lv_obj_set_style_border_width(dashboard_calendar_today_highlight, 0, 0);
+    lv_obj_set_style_pad_all(dashboard_calendar_today_highlight, 0, 0);
+    lv_obj_set_style_bg_color(dashboard_calendar_today_highlight, COLOR_BLACK, 0);
+    lv_obj_set_style_bg_opa(dashboard_calendar_today_highlight, LV_OPA_COVER, 0);
+    lv_obj_add_flag(dashboard_calendar_today_highlight, LV_OBJ_FLAG_HIDDEN);
+
+    for(int index = 0; index < CALENDAR_ROWS * CALENDAR_COLUMNS; ++index) {
+        const int column = index % CALENDAR_COLUMNS;
+        const int row = index / CALENDAR_COLUMNS;
+        dashboard_calendar_days[index] = make_label(
+            screen, "", &ui_font_14_regular,
+            CALENDAR_LEFT + column * CALENDAR_COLUMN_WIDTH,
+            CALENDAR_FIRST_ROW_Y + row * CALENDAR_ROW_HEIGHT + 2);
+        lv_obj_set_size(dashboard_calendar_days[index],
+                        CALENDAR_COLUMN_WIDTH, 17);
+        lv_obj_set_style_text_align(dashboard_calendar_days[index],
+                                    LV_TEXT_ALIGN_CENTER, 0);
+    }
 
     /* 套餐来源行：填充标题下方空白区（键值排布，右缘与网格对齐）。 */
     make_white_mask(screen, 14, 108, 155, 30);
@@ -574,6 +731,9 @@ void ui_show_dashboard(void)
         lv_obj_set_style_text_align(dashboard_quota_countdown[index],
                                     LV_TEXT_ALIGN_RIGHT, 0);
     }
+    /* 主页总是从本月开始，翻月是临时浏览。 */
+    dashboard_calendar_month_offset = 0;
+    refresh_dashboard_calendar(true);
     lv_screen_load(screen);
 }
 
@@ -1442,6 +1602,8 @@ void ui_update_clock(void)
 {
     /* Keep the About page IP line fresh while the page is on screen. */
     if(current_page == PAGE_ABOUT) refresh_about_ip();
+    /* 跨零点时重画日历；其余时间只做一次整数比较。 */
+    if(current_page == PAGE_DASHBOARD) refresh_dashboard_calendar(false);
 
     if(clock_label == NULL || !lv_obj_is_valid(clock_label)) return;
 
@@ -1674,56 +1836,6 @@ void ui_update_codex_quota(int short_remaining_percent, int week_remaining_perce
                 lv_obj_add_flag(dashboard_quota_countdown[index], LV_OBJ_FLAG_HIDDEN);
             }
         }
-    }
-}
-
-static void format_media_time(char *buffer, size_t size, int seconds, bool valid)
-{
-    if(!valid || seconds < 0) {
-        snprintf(buffer, size, "--:--");
-        return;
-    }
-    snprintf(buffer, size, "%02d:%02d", seconds / 60, seconds % 60);
-}
-
-void ui_update_media(bool available, const char *status, const char *title,
-                     const char *artist, int position_seconds,
-                     int duration_seconds, const char *lyric)
-{
-    const bool playing = available && status != NULL && strcmp(status, "playing") == 0;
-    const bool paused = available && status != NULL && strcmp(status, "paused") == 0;
-    if(dashboard_media_status_label != NULL) {
-        lv_label_set_text(dashboard_media_status_label,
-                          playing ? "正在播放" : (paused ? "已暂停" : "未播放"));
-    }
-    if(dashboard_media_title_label != NULL) {
-        lv_label_set_text(dashboard_media_title_label,
-                          available && title != NULL && title[0] ? title : "网易云音乐");
-    }
-    if(dashboard_media_artist_label != NULL) {
-        lv_label_set_text(dashboard_media_artist_label,
-                          available && artist != NULL && artist[0] ? artist : "--");
-    }
-    if(dashboard_media_lyric_label != NULL) {
-        lv_label_set_text(dashboard_media_lyric_label,
-                          available && lyric != NULL && lyric[0] ? lyric : "暂无歌词");
-    }
-    char position_text[12];
-    char duration_text[12];
-    const bool timeline_valid = available && duration_seconds > 0;
-    format_media_time(position_text, sizeof(position_text), position_seconds, timeline_valid);
-    format_media_time(duration_text, sizeof(duration_text), duration_seconds, timeline_valid);
-    if(dashboard_media_position_label != NULL) {
-        lv_label_set_text(dashboard_media_position_label, position_text);
-    }
-    if(dashboard_media_duration_label != NULL) {
-        lv_label_set_text(dashboard_media_duration_label, duration_text);
-    }
-    if(dashboard_media_progress_knob != NULL) {
-        int progress = timeline_valid ? (position_seconds * 182) / duration_seconds : 0;
-        if(progress < 0) progress = 0;
-        if(progress > 182) progress = 182;
-        lv_obj_set_x(dashboard_media_progress_knob, 191 + progress);
     }
 }
 

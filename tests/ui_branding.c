@@ -36,8 +36,8 @@ int main(int argc, char **argv){
  for(int i=0;i<400*300;i++){fputc(buffer[i*4+2],f);fputc(buffer[i*4+1],f);fputc(buffer[i*4],f);}fclose(f);
  ui_toggle_page();assert(lv_screen_active()!=screen);
  ui_update_environment(36,40,95,true,true);
- ui_update_codex_quota(75,88,true);
- ui_update_media(true,"paused","I Was King","ONE OK ROCK",47,239,"am I, when am I gonna start");
+ ui_update_codex_quota(75,88,41,true,false,31*60,(2*24+9)*3600,(1*24+9)*3600);
+ ui_update_quota_provider("火山方舟");
  ui_update_performance(5,62,8,true,21,41,true,41,true,7,0,0,true);
  snapshot(d,argv[1],"dashboard");
  ui_show_performance();snapshot(d,argv[1],"performance");

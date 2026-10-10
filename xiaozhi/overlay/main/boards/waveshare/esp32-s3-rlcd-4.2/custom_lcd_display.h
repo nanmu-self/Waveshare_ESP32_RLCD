@@ -64,6 +64,7 @@ public:
     void ToggleComputerPicker();
     bool ConfirmComputerPicker();
     bool ShowPanelPage(const std::string& page);
+    void StepPanelCalendar(int delta);
     void RLCD_Init();
     void RLCD_ColorClear(uint8_t color);
     void RLCD_Display();

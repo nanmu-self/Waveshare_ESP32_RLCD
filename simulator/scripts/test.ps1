@@ -11,11 +11,13 @@ $previousVideoDriver = $env:SDL_VIDEODRIVER
 $previousAutoClose = $env:AI_PANEL_AUTOCLOSE_MS
 $previousScreenshotPath = $env:AI_PANEL_SCREENSHOT_PATH
 $previousStartPage = $env:AI_PANEL_START_PAGE
-$previousMediaDemo = $env:AI_PANEL_MEDIA_DEMO
+$previousScreenshotDelay = $env:AI_PANEL_SCREENSHOT_DELAY_MS
 
 try {
     $env:SDL_VIDEODRIVER = 'dummy'
-    $env:AI_PANEL_AUTOCLOSE_MS = '1000'
+    $env:AI_PANEL_AUTOCLOSE_MS = '3000'
+    # 启动署名 2000ms 后消失，截图必须等它过去。
+    $env:AI_PANEL_SCREENSHOT_DELAY_MS = '2400'
 
     foreach ($screenshotPath in @($dashboardScreenshotPath, $computersScreenshotPath, $performanceScreenshotPath, $synaScreenshotPath)) {
         if (Test-Path -LiteralPath $screenshotPath) {
@@ -24,7 +26,6 @@ try {
     }
 
     $env:AI_PANEL_START_PAGE = 'dashboard'
-    $env:AI_PANEL_MEDIA_DEMO = '1'
     $env:AI_PANEL_SCREENSHOT_PATH = $dashboardScreenshotPath
     & $simulatorExe
     if ($LASTEXITCODE -ne 0) {
@@ -32,7 +33,6 @@ try {
     }
 
     $env:AI_PANEL_START_PAGE = 'performance'
-    $env:AI_PANEL_MEDIA_DEMO = '0'
     $env:AI_PANEL_SCREENSHOT_PATH = $performanceScreenshotPath
     & $simulatorExe
     if ($LASTEXITCODE -ne 0) {
@@ -64,5 +64,5 @@ finally {
     $env:AI_PANEL_AUTOCLOSE_MS = $previousAutoClose
     $env:AI_PANEL_SCREENSHOT_PATH = $previousScreenshotPath
     $env:AI_PANEL_START_PAGE = $previousStartPage
-    $env:AI_PANEL_MEDIA_DEMO = $previousMediaDemo
+    $env:AI_PANEL_SCREENSHOT_DELAY_MS = $previousScreenshotDelay
 }

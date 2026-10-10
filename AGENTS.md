@@ -23,7 +23,7 @@
 2. **固件构建路径必须是无空格纯 ASCII**（如 `C:/syna`），中文路径会破坏 ESP-IDF 工具链。
 3. **上游版本锁死**：`xiaozhi/upstream.lock` 指定 78/xiaozhi-esp32 @ `5df5b7f`，`idf=6.0.2`。不得擅自升级上游——`apply_ui_overlay.py` 的补丁锚点会失效。
 4. **板型唯一**：`waveshare/esp32-s3-rlcd-4.2`。不得将固件刷到其他型号。
-5. **改 UI 要双写**：`xiaozhi/overlay/main/boards/waveshare/esp32-s3-rlcd-4.2/ui_*.c`（固件真身）和 `simulator/src/`（模拟器镜像）需人工保持同步，`simulator/src/assets/` 与 overlay 的 24 个 `ui_*.c` 一一对应。
+5. **改 UI 要双写**：`xiaozhi/overlay/main/boards/waveshare/esp32-s3-rlcd-4.2/ui_*.c`（固件真身）和 `simulator/src/`（模拟器镜像）需人工保持同步，`simulator/src/assets/` 与 overlay 的 62 个 `ui_*.c` 一一对应（生成脚本只写模拟器一侧时，固件那份需手动同步）。
 6. **不采集凭证**：项目哲学是只读接口，不读提示词/代码/文件内容/API Key，不抓登录态。新功能延续此原则。
 7. **作者脚本的路径是示例**：`xiaozhi/build_windows.ps1`、`enter-idf.ps1`、`simulator/scripts/*.ps1` 内含作者本机布局（D:/syna-toolchains 等），复用前先改参数，通用环境优先用 `docs/BUILD.md` 手动命令。
 8. **产物与备份不入库**：`.gitignore` 已覆盖 `dist/`、`release/`（reporter 的）、`*.venv`、`备份*/`、`full-flash.bin` 等。安装器备份含私人数据，绝不提交。
@@ -101,10 +101,11 @@ powershell -ExecutionPolicy Bypass -File reporter\build_release.ps1 -Version 1.0
 - 固件主机测试需 C++ 编译器：设 `SYNA_VCVARS`（vcvars64.bat）与 `SYNA_FIRMWARE_SOURCE`（已打补丁的上游源码）。
 - 版本号：根目录 `VERSION`，安装器用 `-Version` 参数；发布流程见 `docs/RELEASE_CHECKLIST.md`。
 
-## 当前进行中（未提交，接手前先 `git diff` 确认）
+## 最近变更（流水账，非“未提交”；接手前先 `git log -5` 与 `git status` 确认）
 
+- 首页**音乐卡片已替换为日历卡片**（本轮，已编译通过、待刷板）：删除 `ui_update_media` 及 UI 层全部 media 静态量，右卡改为当月网格（标题 `◀ 2026年 10月 ▶ 周六`、星期表头、6×7 日期、今天反色块）。底图里蚀刻的音乐元素由单块 `make_white_mask(screen, 184, 74, 204, 172)` 遮白，卡片圆角边框保留。日期用 `time()/localtime` + 纯算法（Sakamoto 星期、闰年表），**未校时（年 < 2020）时整块留空**；`ui_update_clock()` 每秒只做一次整数比较，跨零点才重画。翻月走 MCP 工具 `self.panel.calendar`（`next`/`prev`/`today` → `CustomLcdDisplay::StepPanelCalendar` → `ui_calendar_step`），返回主页时自动回到本月——板子两个按键都被占用，翻月只能靠语音。新增 `ui_font_11_cjk`（Noto 11px，仅 9 个字形）做小号星期表头；`generate_assets.ps1` 仍只写模拟器一侧（已知问题）。**Reporter 侧 media 字段保留未删**（协议不变，UDP 仍在发，只是板端不再显示）。
 - `reporter/reporter.py`：CPU 温度改用 `Get-CimInstance`（wmic 失效修复）；GPU 走 PDH GPU Engine（核显可用）；纯核显机器 GPU 温度用 CPU 温度近似。配套测试已加（`test_reporter.py`）。
-- `xiaozhi/.../ui.c` + `simulator/src/ui/ui.c`：关于页新增 STA IP 动态显示（`#ifdef ESP_PLATFORM`，模拟器占位）。**尚未编译刷板**。
+- `xiaozhi/.../ui.c` + `simulator/src/ui/ui.c`：关于页新增 STA IP 动态显示（`#ifdef ESP_PLATFORM`，模拟器占位）。
 - 额度数据源可切换（本会话新增，已实测）：`reporter/quota_providers.py` 数据源目录 + `@register_quota_provider` 注册表；新增 `ArkQuotaCollector`（火山方舟 `GetCodingPlanUsage`，V4 签名纯标准库移植，Node 参考向量交叉验证，`session`→短周期、`weekly`→周额度，`monthly` 不展示；云端频控阈值未公开，实测 ~6 QPS 突发可用但长周期配额未知，轮询 300 秒 + 失败指数退避，陈旧缓存 600 秒防屏面跌--）；设置窗口新增“额度来源”对话框（目录驱动，AK/SK 存 `%LOCALAPPDATA%\AIAgentPanel\reporter.json`，保存后可一键重启 worker）；`status()` 新增 `quota_provider` 字段（仅本机 HTTP 诊断，UDP 协议不变）。真实 AK/SK 实测接口打通。未来加 OpenCode 等套餐 = 1 个收集器类 + 1 条目录描述，UI/工厂自动适配，未知 provider 回退 Codex。
 - 额度重置倒计时 + 月额度上屏（同会话续）：UDP 新增 `codex_month_remaining`/`codex_month_resets_at`；dashboard 额度区改为整体自绘的紧凑网格（每行 = 标题(5h/周/月) | 40×5px 细进度条 | 右对齐百分比(14px) | 右对齐倒计时(14px)），倒计时极简格式 `31m`/`9h`/`2d9h`（<1分 `<1m`，≥10天退化为 `12d`），未知自动隐藏；agent 状态从黑色胶囊图改为标题行内联徽标 `● 工作中`（底图标题区遮白重绘，状态资产不再引用，DONE 闪烁保留）；`ui_update_codex_quota` 8 参；check_quota_stale 宿主测试同步（三种紧凑倒计时、填充宽度基准 38）；固件全量编译通过；模拟器截图验证。
 
@@ -120,7 +121,7 @@ powershell -ExecutionPolicy Bypass -File reporter\build_release.ps1 -Version 1.0
 - 位置：默认自动 IP 定位（ip-api.com → 经纬度 → 和风 GeoAPI 换 LocationID，失败退 myip.ipip.net，再失败降级用旧缓存），LocationID 缓存 NVS 24 小时；设置门户可切手动填 LocationID。Key 走设置门户存 NVS（`wx-key`/`wx-mode`/`wx-loc`），不进仓库。
 - UI：`PAGE_WEATHER` 插在 Syna 与 About 之间（KEY 短按循环五页），温度大字用新字体 `ui_font_40_regular`（Arimo 40px）；中文字库并入 GB2312 全集（12905 字符）保证任意城市名可显示；页面右上角按和风免费版条款标注"和风天气"署名。
 - 双写已同步：overlay 与 simulator；模拟器 `AI_PANEL_START_PAGE=weather` 可预览，mock 数据在 main.c；截图延时新增 `AI_PANEL_SCREENSHOT_DELAY_MS` 环境变量（默认 200ms，签名页 2 秒需调大）。
-- 验证状态：模拟器构建 + 截图通过、tests/check_ui_branding.py 通过（toggle 计数已改四次、clang 响应文件绕过 Windows 命令行长度限制、排除 LVGL SDL 驱动免链接 SDL2）、weather_service.cc g++ 桩语法检查 -Wall -Wextra 通过；**固件尚未编译刷板**（本机无 IDF 6.0.2 环境）。
+- 验证状态：模拟器构建 + 截图通过、tests/check_ui_branding.py 通过（toggle 计数已改四次、clang 响应文件绕过 Windows 命令行长度限制、排除 LVGL SDL 驱动免链接 SDL2）、weather_service.cc g++ 桩语法检查 -Wall -Wextra 通过；**固件尚未刷板实测**（本机有 IDF 6.0.2：`C:/Espressif`，构建走 `C:/syna/build-session.ps1`）。
 - 和风 Key 测试可用：7f0bda…4afa 是老版免费开发版（devapi.qweather.com 直连可用，无需专属 Host）；免费额度 1000 次/天，30 分钟刷新仅消耗 48 次/天。
 - 视觉增强（第二轮）：14 个 1-bit 程序化图标（`generate_weather_icons.py` 生成，双写两端，const 数组存 Flash）；和风 icon code 映射天气图标（weather_icon_for）；参数图标（温度计/水滴/风向标/室内）；顶栏星期时钟（kWeekdayNames + ui_update_clock 分支）；城市旁 AQI（/v7/air/now 免费可用：aqi+category）；右侧第 4 行室内温湿度（板载 SHT 经 ui_update_environment 存档）；底栏 WiFi+电量标注+更新时间（署名移至关于页）；温度用新字体 ui_font_40_bold（Arimo Bold，fonts/Arimo-Bold.ttf sha256 d7a8b1…6ba）。
 - 未采纳（1-bit 屏硬件限制）：灰度/彩色/淡色水印、28px 动态城市字库（~1.3MB）、降水概率（和风 daily 接口无 precipProb 字段，仅 hourly 有）。

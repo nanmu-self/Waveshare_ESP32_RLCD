@@ -44,6 +44,7 @@ add_executable(ai_panel_simulator
     src/assets/ui_font_11_regular.c
     src/assets/ui_font_14_regular.c
     src/assets/ui_font_14_cjk.c
+    src/assets/ui_font_11_cjk.c
     src/assets/ui_font_28_brand.c
     src/assets/ui_font_40_regular.c
     src/assets/ui_font_40_bold.c

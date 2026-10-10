@@ -81,6 +81,9 @@ generate('ui_font_40_bold',40,46,latin,font_path=BOLD)
 cjk=[cp for cp in json.loads((HERE/'fonts/cjk-codepoints.json').read_text()) if cp in coverage and cp not in latin]
 assert all(cp in pixel_glyphs for cp in cjk), 'Pixel font must preserve existing CJK coverage'
 generate('ui_font_14_cjk',16,17,cjk,'ui_font_14_regular',pixel=True)
+# 11px CJK subset for the dashboard calendar's weekday header. Unifont has no
+# 11px face, so these nine glyphs come from Noto like the digit fallbacks.
+generate('ui_font_11_cjk',11,14,map(ord,'日一二三四五六'),'ui_font_11_regular')
 generate('ui_font_28_brand',28,34,map(ord,'希娜 Syna · 楠木'))
 rights=sorted({r.toUnicode() for r in font_data['name'].names if r.nameID in (0,13,14)})
 # SOURCE.md is maintained with notices for all three upstream fonts.

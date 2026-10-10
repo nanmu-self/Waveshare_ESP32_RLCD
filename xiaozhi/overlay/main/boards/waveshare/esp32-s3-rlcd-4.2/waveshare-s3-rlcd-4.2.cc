@@ -187,6 +187,31 @@ private:
                 return std::string("已切换到 ") + page;
             });
         mcp_server.AddTool(
+            "self.panel.calendar",
+            "翻动主页（dashboard）右侧日历卡片的月份。action 使用 next（下个月）、"
+            "prev（上个月）或 today（回到本月）。翻月需要主页在前台。",
+            PropertyList({Property("action", kPropertyTypeString)}),
+            [this](const PropertyList& properties) -> ReturnValue {
+                const std::string action =
+                    LowerAscii(properties["action"].value<std::string>());
+                int delta = 0;
+                if (action == "next" || action == "下个月" || action == "下月") delta = 1;
+                else if (action == "prev" || action == "上个月" || action == "上月") delta = -1;
+                else if (action == "today" || action == "本月" || action == "今天") delta = 0;
+                else throw std::runtime_error(
+                    "Unknown action; use next, prev or today");
+
+                if (display_ == nullptr) {
+                    throw std::runtime_error("状态屏尚未就绪");
+                }
+                Application::GetInstance().Schedule([this, delta]() {
+                    display_->StepPanelCalendar(delta);
+                });
+                return delta == 0 ? std::string("日历已回到本月")
+                                  : std::string(delta > 0 ? "日历已切到下个月"
+                                                          : "日历已切到上个月");
+            });
+        mcp_server.AddTool(
             "self.computer.list", "列出状态屏发现的电脑、在线状态和当前选择。",
             PropertyList(), [](const PropertyList&) -> ReturnValue {
                 PanelReporterSnapshot snapshot = {};
