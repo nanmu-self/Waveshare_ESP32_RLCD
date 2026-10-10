@@ -14,7 +14,7 @@ with tempfile.TemporaryDirectory(prefix="syna-ui-") as temporary:
     # clang 会把反斜杠当转义符，路径统一用正斜杠。
     arguments=["-w","-O0","-DLV_CONF_INCLUDE_SIMPLE","-DLV_LVGL_H_INCLUDE_SIMPLE",
         "-Iinclude","-Isimulator","-Isimulator/vendor/lvgl-9.5.0","-Isimulator/src",
-        "tests/ui_branding.c","simulator/src/ui/ui.c",
+        "tests/ui_branding.c","simulator/src/ui/ui.c","simulator/src/ui/lunar.cc",
         *map(str,sources),*map(str,assets)]
     arguments=[a.replace("\\","/") for a in arguments]
     response=Path(temporary)/"sources.rsp"
