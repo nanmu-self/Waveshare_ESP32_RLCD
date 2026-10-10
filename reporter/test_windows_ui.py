@@ -87,10 +87,9 @@ class WindowTests(unittest.TestCase):
         dialog.deleteLater()
 
     def test_disconnect_clears_all_live_values(self):
-        self.window.render({'computer_name': 'old host', 'performance': {'gpu_percent': 99}, 'media': {'available': True, 'title': 'old song'}, 'devices':[{'ip':'test'}]})
+        self.window.render({'computer_name': 'old host', 'performance': {'gpu_percent': 99}, 'devices':[{'ip':'test'}]})
         self.window.offline()
         self.assertEqual(self.window.labels['gpu'].text(), '—')
-        self.assertNotIn('old song', self.window.labels['music'].text())
         self.assertNotIn('test', self.window.labels['device'].text())
         self.assertFalse(self.window.diagnostic.isEnabled())
         self.assertEqual(self.window.labels['host'].text(), '')

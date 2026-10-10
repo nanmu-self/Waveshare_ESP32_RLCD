@@ -252,14 +252,10 @@ class ReporterWindow(QWidget):
         self.text(card, '实时网络', 20, 14, 160, 22, 12, muted=True)
         self.text(card, '↑  —', 20, 38, 320, 29, 19, key='upload')
         self.text(card, '↓  —', 363, 38, 320, 29, 19, key='download')
-        card = self.card(28, 422, 346, 102)
-        self.text(card, 'CODEX', 20, 15, 306, 21, 11, True, True, key='quota_status')
-        self.text(card, '等待数据', 20, 39, 306, 27, 20, True, key='agent')
-        self.text(card, '短周期剩余 —    ·    周额度剩余 —', 20, 73, 306, 23, 12, muted=True, key='quota')
-        card = self.card(388, 422, 344, 102)
-        self.text(card, '网易云音乐', 20, 15, 304, 21, 11, True, True)
-        self.text(card, '等待播放', 20, 39, 304, 27, 16, True, key='music')
-        self.text(card, '打开网易云并播放歌曲', 20, 73, 304, 23, 11, muted=True, key='music_detail')
+        card = self.card(28, 422, 704, 102)
+        self.text(card, 'CODEX', 20, 15, 664, 21, 11, True, True, key='quota_status')
+        self.text(card, '等待数据', 20, 39, 664, 27, 20, True, key='agent')
+        self.text(card, '短周期剩余 —    ·    周额度剩余 —', 20, 73, 664, 23, 12, muted=True, key='quota')
         card = self.card(28, 538, 704, 72)
         self.text(card, '开发板通信', 20, 12, 180, 22, 12, muted=True)
         self.text(card, '等待开发板请求', 20, 37, 660, 24, 14, key='device')
@@ -281,7 +277,7 @@ class ReporterWindow(QWidget):
 
     def put(self, key, value):
         self.labels[key].setText(value)
-        if key in ('music','music_detail','host'):
+        if key == 'host':
             self.labels[key].setToolTip(value)
 
     def render(self, body):
@@ -307,16 +303,6 @@ class ReporterWindow(QWidget):
             note = QUOTA_SOURCE_NOTES.get(quota.get('source') or '', '')
             self.put('quota_status', title + (' · ' + note if note else ''))
         self.put('quota', '短周期 '+number(quota.get('short_remaining_percent'),'%')+'  ·  周 '+number(quota.get('week_remaining_percent'),'%')+'  ·  月 '+number(quota.get('month_remaining_percent'),'%'))
-        media = body.get('media', {})
-        def clock(value):
-            seconds = max(0,int(value or 0))
-            return f'{seconds//60}:{seconds%60:02d}'
-        if media.get('available'):
-            self.put('music', media.get('title', ''))
-            self.put('music_detail', ('播放中' if media.get('playback_status') == 'playing' else '已暂停')+f" · {clock(media.get('position_seconds'))}/{clock(media.get('duration_seconds'))} · {media.get('artist','')}")
-        else:
-            self.put('music', '未获取到歌曲')
-            self.put('music_detail', '请在网易云播放歌曲')
         devices = body.get('devices', [])
         self.put('device', f"已收到 {len(devices)} 台开发板请求  ·  "+'、'.join(p.get('ip','') for p in devices) if devices else '尚未收到请求，请确认开发板与电脑连接同一 Wi-Fi。')
         self.put('updated', '最近更新  '+time.strftime('%H:%M:%S'))
@@ -338,8 +324,6 @@ class ReporterWindow(QWidget):
         self.put('agent', '等待服务启动')
         self.put('quota', '短周期 —  ·  周 —  ·  月 —')
         self.put('quota_status', provider_title(DEFAULT_PROVIDER_ID))
-        self.put('music', '等待服务启动')
-        self.put('music_detail', '—')
         self.put('device', '服务停止时，不向开发板发送数据。')
         self.put('updated', '尚未连接服务 / 已清除旧数据')
         self.toggle.setText('停止服务' if self.worker else '启动服务')

@@ -1,6 +1,8 @@
 # UI 素材说明
 
-当前首页按用户提供的 400×300 单色音乐状态屏参考图重做。所有图标都通过内置图片生成模式单独生成，保存在 `source/music_ui_icons/`；`generate_assets.ps1` 只负责裁切、缩放、重着色、定位和二值化，不使用图形代码重画图标。
+当前首页按用户提供的 400×300 单色状态屏参考图重做。所有图标都通过内置图片生成模式单独生成，保存在 `source/music_ui_icons/`；`generate_assets.ps1` 只负责裁切、缩放、重着色、定位和二值化，不使用图形代码重画图标。
+
+注意：首页右侧卡片已改为日历，`screen_base.png` 里仍蚀刻着旧的音乐元素（波形、专辑盒、音符、虚线进度条、歌词），运行时由 `ui.c` 的遮白块盖住。要彻底清理需要改本脚本并重新生成底图，会牵动全部可见元素，暂未做。
 
 ## 当前图标与生成提示词
 
@@ -22,7 +24,7 @@
 
 ## 旧版素材
 
-`source/icons/` 和 `source/ciallo_maid_pixel_transparent.png` 是上一版状态首页素材，当前音乐状态首页不再引用，但暂时保留以便回退或制作其他页面。
+`source/music_ui_icons/` 里的 waveform、music_note、artist 只服务于底图里已被遮住的音乐区；`source/icons/` 和 `source/ciallo_maid_pixel_transparent.png` 是更早一版首页素材。三者当前都不被运行时引用，保留以便回退或制作其他页面。
 
 ## 重新生成 LVGL 资源
 

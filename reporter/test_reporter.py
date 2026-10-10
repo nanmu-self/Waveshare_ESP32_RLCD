@@ -290,7 +290,7 @@ class DiscoveryPayloadTests(unittest.TestCase):
             state = reporter.ReporterState(
                 {"reporter_id": "x", "computer_name": "PC", "pairing_token": "t"},
                 reporter.MetricsCollector(), reporter.CodexAgentMonitor(),
-                StubQuotaCollector(), reporter.NeteaseMediaMonitor(), 8765)
+                StubQuotaCollector(), 8765)
             with patch('reporter.time.time', return_value=1791400000):
                 payload = state.discovery("127.0.0.1")
         self.assertEqual(payload["codex_short_remaining"], 51)
@@ -319,7 +319,7 @@ class DiscoveryPayloadTests(unittest.TestCase):
             state = reporter.ReporterState(
                 {"reporter_id": "x", "computer_name": "PC", "pairing_token": "t"},
                 reporter.MetricsCollector(), reporter.CodexAgentMonitor(),
-                StubQuotaCollector(), reporter.NeteaseMediaMonitor(), 8765)
+                StubQuotaCollector(), 8765)
             payload = state.discovery("127.0.0.1")
         self.assertEqual(payload["codex_short_resets_at"], -1)
         self.assertEqual(payload["codex_week_resets_at"], -1)

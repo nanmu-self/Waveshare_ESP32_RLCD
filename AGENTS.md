@@ -4,12 +4,12 @@
 
 ## 项目是什么
 
-**希娜 Syna**：微雪 ESP32-S3-RLCD-4.2（400×300 黑白圆屏，16MB Flash / 8MB PSRAM）桌面助手，配电脑端 Reporter。板子显示电脑性能、AI Agent（Codex）状态与额度、网易云音乐信息；电脑端通过局域网 UDP 上报数据。当前版本 1.0.0 候选版。
+**希娜 Syna**：微雪 ESP32-S3-RLCD-4.2（400×300 黑白圆屏，16MB Flash / 8MB PSRAM）桌面助手，配电脑端 Reporter。板子首页显示日历，另有电脑性能、AI Agent（Codex）状态与额度、天气、Syna 对话/待办、电脑列表、关于页；电脑端通过局域网 UDP 上报数据。当前版本 1.0.0 候选版。
 
 | 目录 | 内容 | 语言/技术栈 |
 | --- | --- | --- |
 | `xiaozhi/` | 固件：小智上游补丁（overlay）+ 板级源码 + 构建入口 | C/C++，ESP-IDF 6.0.2，LVGL |
-| `reporter/` | 电脑端状态服务（性能采集、Codex 状态/额度、网易云媒体）、PySide6 窗口 | Python 3.11 |
+| `reporter/` | 电脑端状态服务（性能采集、Codex 状态/额度）、PySide6 窗口 | Python 3.11 |
 | `installer/` | Windows / macOS 一体安装器 | Python + PowerShell |
 | `simulator/` | LVGL 桌面模拟器（不用硬件即可预览 UI） | C，CMake + SDL2 + LVGL 9.5.0 |
 | `tests/` | 固件 UI 主机测试 | Python 驱动 + clang |
@@ -19,7 +19,7 @@
 
 ## 硬性约束（红线，违反即返工）
 
-1. **Python 必须 3.11.x**。依赖按 3.11 锁定（PySide6 6.8.3、winrt 3.2.1 等），3.14 等新版本装不上。本机若只有新 Python，用 `py -3.11` 或静默装 3.11.9（3.11 系列最后一个带 Windows 安装器的版本）。
+1. **Python 必须 3.11.x**。依赖按 3.11 锁定（PySide6 6.8.3、psutil 7.0.0），3.14 等新版本装不上。本机若只有新 Python，用 `py -3.11` 或静默装 3.11.9（3.11 系列最后一个带 Windows 安装器的版本）。
 2. **固件构建路径必须是无空格纯 ASCII**（如 `C:/syna`），中文路径会破坏 ESP-IDF 工具链。
 3. **上游版本锁死**：`xiaozhi/upstream.lock` 指定 78/xiaozhi-esp32 @ `5df5b7f`，`idf=6.0.2`。不得擅自升级上游——`apply_ui_overlay.py` 的补丁锚点会失效。
 4. **板型唯一**：`waveshare/esp32-s3-rlcd-4.2`。不得将固件刷到其他型号。
@@ -68,7 +68,7 @@ powershell -ExecutionPolicy Bypass -File reporter\build_release.ps1 -Version 1.0
 # 产物：reporter\dist\SynaReporter.exe（绿色版）+ reporter\release\SynaReporter-Setup-*.exe
 ```
 
-- 入口 `reporter.py`（supervisor + worker 架构），UI 在 `windows_ui.py`，媒体在 `media_monitor.py`，Mac 专用 `macos_*.py`（勿在 Windows 环境动）。
+- 入口 `reporter.py`（supervisor + worker 架构），UI 在 `windows_ui.py`，额度数据源目录在 `quota_providers.py`，Mac 专用 `macos_*.py`（勿在 Windows 环境动）。
 - 运行数据：`%LOCALAPPDATA%\AIAgentPanel\`（reporter.json 身份/配对令牌、reporter.log）。
 - 接口：HTTP 8765 仅本机诊断（`/api/v1/health|status|pairing`）；UDP 8766 局域网发现与数据。
 - 首次构建前确保 `reporter/release/` 目录存在（IExpress 需要）。
@@ -80,7 +80,8 @@ powershell -ExecutionPolicy Bypass -File reporter\build_release.ps1 -Version 1.0
 
 - 性能：`performance.gpu_percent` 等（null → 屏幕显示 `--`）
 - Codex 额度：`codex_short_remaining` / `codex_week_remaining` / `codex_login_required` / `codex_quota_stale`——**板子只认字段名不关心数据源**，换数据源（如其他厂商额度）只需改 Reporter 并复用这些字段
-- 媒体：`media_title` / `media_artist` / `media_position` / `media_lyric` 等
+
+- 音乐/媒体字段（`media_*`）已在两侧彻底删除；想要音乐功能请看 `music-feature` 分支。
 
 改任何一侧字段名必须同步另一侧；新增字段先查 `reporter_service.cc` 的解析。额度数据源可切换/扩展：目录 `reporter/quota_providers.py` + `reporter.py` 的 `@register_quota_provider` 注册制，板子不感知数据源，切换与新增均不涉及固件。
 
@@ -103,7 +104,7 @@ powershell -ExecutionPolicy Bypass -File reporter\build_release.ps1 -Version 1.0
 
 ## 最近变更（流水账，非“未提交”；接手前先 `git log -5` 与 `git status` 确认）
 
-- 首页**音乐卡片已替换为日历卡片**（本轮，已编译通过、待刷板）：删除 `ui_update_media` 及 UI 层全部 media 静态量，右卡改为当月网格（标题 `◀ 2026年 10月 ▶ 周六`、星期表头、6×7 日期、今天反色块）。底图里蚀刻的音乐元素由单块 `make_white_mask(screen, 184, 74, 204, 172)` 遮白，卡片圆角边框保留。日期用 `time()/localtime` + 纯算法（Sakamoto 星期、闰年表），**未校时（年 < 2020）时整块留空**；`ui_update_clock()` 每秒只做一次整数比较，跨零点才重画。翻月走 MCP 工具 `self.panel.calendar`（`next`/`prev`/`today` → `CustomLcdDisplay::StepPanelCalendar` → `ui_calendar_step`），返回主页时自动回到本月——板子两个按键都被占用，翻月只能靠语音。新增 `ui_font_11_cjk`（Noto 11px，仅 9 个字形）做小号星期表头；`generate_assets.ps1` 仍只写模拟器一侧（已知问题）。**Reporter 侧 media 字段保留未删**（协议不变，UDP 仍在发，只是板端不再显示）。
+- 首页**音乐卡片已替换为日历卡片**（本轮，已编译通过、待刷板）：删除 `ui_update_media` 及 UI 层全部 media 静态量，右卡改为当月网格（标题 `◀ 2026年 10月 ▶ 周六`、星期表头、6×7 日期、今天反色块）。底图里蚀刻的音乐元素由单块 `make_white_mask(screen, 184, 74, 204, 172)` 遮白，卡片圆角边框保留。日期用 `time()/localtime` + 纯算法（Sakamoto 星期、闰年表），**未校时（年 < 2020）时整块留空**；`ui_update_clock()` 每秒只做一次整数比较，跨零点才重画。翻月走 MCP 工具 `self.panel.calendar`（`next`/`prev`/`today` → `CustomLcdDisplay::StepPanelCalendar` → `ui_calendar_step`），返回主页时自动回到本月——板子两个按键都被占用，翻月只能靠语音。新增 `ui_font_11_cjk`（Noto 11px，仅 9 个字形）做小号星期表头；`generate_assets.ps1` 仍只写模拟器一侧（已知问题）。Reporter 侧 media 管道同轮删除：`media_monitor.py` / `macos_media.py` 及对应测试删除，`reporter.py` / `windows_ui.py` / `native_ui.swift` / `reporter_service.*` 的 media 字段全部移除，依赖减掉 `winrt-Windows.*` / `websocket-client` / `pycaw`，Windows 状态窗口的“网易云音乐”卡并入全宽 CODEX 卡。保留音乐的完整实现在分支 `music-feature`（指向 78f98ae）。**底座 `screen_base.png` 里仍蚀刻着音乐元素**（运行时被遮白块盖住），要彻底清理得改 `generate_assets.ps1` 重新生成底图，铺开面较大暂未做。
 - `reporter/reporter.py`：CPU 温度改用 `Get-CimInstance`（wmic 失效修复）；GPU 走 PDH GPU Engine（核显可用）；纯核显机器 GPU 温度用 CPU 温度近似。配套测试已加（`test_reporter.py`）。
 - `xiaozhi/.../ui.c` + `simulator/src/ui/ui.c`：关于页新增 STA IP 动态显示（`#ifdef ESP_PLATFORM`，模拟器占位）。
 - 额度数据源可切换（本会话新增，已实测）：`reporter/quota_providers.py` 数据源目录 + `@register_quota_provider` 注册表；新增 `ArkQuotaCollector`（火山方舟 `GetCodingPlanUsage`，V4 签名纯标准库移植，Node 参考向量交叉验证，`session`→短周期、`weekly`→周额度，`monthly` 不展示；云端频控阈值未公开，实测 ~6 QPS 突发可用但长周期配额未知，轮询 300 秒 + 失败指数退避，陈旧缓存 600 秒防屏面跌--）；设置窗口新增“额度来源”对话框（目录驱动，AK/SK 存 `%LOCALAPPDATA%\AIAgentPanel\reporter.json`，保存后可一键重启 worker）；`status()` 新增 `quota_provider` 字段（仅本机 HTTP 诊断，UDP 协议不变）。真实 AK/SK 实测接口打通。未来加 OpenCode 等套餐 = 1 个收集器类 + 1 条目录描述，UI/工厂自动适配，未知 provider 回退 Codex。

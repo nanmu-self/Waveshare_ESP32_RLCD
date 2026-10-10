@@ -32,7 +32,6 @@ from typing import Any
 
 import psutil
 
-from media_monitor import NeteaseMediaMonitor
 from macos_metrics import MacMetrics
 from codex_runtime import read_activity
 from quota_providers import DEFAULT_PROVIDER_ID, provider_spec
@@ -1251,7 +1250,7 @@ class ReporterState:
     def __init__(self, identity: dict[str, str], collector: MetricsCollector,
                  agent_monitor: CodexAgentMonitor,
                  quota_collector: QuotaCollectorBase,
-                 media_monitor: NeteaseMediaMonitor, http_port: int = HTTP_PORT) -> None:
+                 http_port: int = HTTP_PORT) -> None:
         self.http_port = http_port
         self.reporter_id = identity["reporter_id"]
         self.computer_name = identity["computer_name"]
@@ -1260,7 +1259,6 @@ class ReporterState:
         self.collector = collector
         self.agent_monitor = agent_monitor
         self.quota_collector = quota_collector
-        self.media_monitor = media_monitor
         self.started_at = int(time.time())
         self._devices_lock = threading.Lock()
         self._devices = {}
@@ -1303,13 +1301,11 @@ class ReporterState:
             "codex_quota": asdict(self.quota_collector.snapshot()),
             "quota_provider": self.quota_collector.provider_name,
             "opencode_plan": self.quota_collector.plan_info(),
-            "media": asdict(self.media_monitor.snapshot()),
         }
 
     def discovery(self, peer_ip: str) -> dict[str, Any]:
         agent = self._agent_snapshot()
         quota = self.quota_collector.snapshot()
-        media = self.media_monitor.snapshot()
         now = int(time.time())
         return {
             "type": "AI_PANEL_REPORTER_V1",
@@ -1346,14 +1342,6 @@ class ReporterState:
                 (provider_spec(self.quota_collector.provider_name) or {}).get("board")
                 or self.quota_collector.provider_name),
             "codex_quota_stale": quota.stale,
-            "media_available": media.available,
-            "media_source": media.source,
-            "media_title": media.title[:48],
-            "media_artist": media.artist[:32],
-            "media_status": media.playback_status,
-            "media_position": media.position_seconds,
-            "media_duration": media.duration_seconds,
-            "media_lyric": media.lyric[:64],
             "performance": asdict(self.collector.snapshot()),
             "ip": local_ip_for(peer_ip),
             "http_port": self.http_port,
@@ -1462,15 +1450,13 @@ def run_worker(port: int) -> int:
     collector = MetricsCollector()
     agent_monitor = CodexAgentMonitor()
     quota_collector = make_quota_collector()
-    media_monitor = NeteaseMediaMonitor()
-    state = ReporterState(identity, collector, agent_monitor, quota_collector, media_monitor, port)
+    state = ReporterState(identity, collector, agent_monitor, quota_collector, port)
     discovery = DiscoveryServer(state)
     http_server = ReporterHTTPServer(("0.0.0.0", port), make_handler(state))
     http_server.daemon_threads = True
 
     collector.start()
     quota_collector.start()
-    media_monitor.start()
     discovery.start()
     print(f"Reporter ID: {state.reporter_id}", flush=True)
     print(f"Computer: {state.computer_name}", flush=True)
@@ -1485,7 +1471,6 @@ def run_worker(port: int) -> int:
         http_server.server_close()
         discovery.stop()
         quota_collector.stop()
-        media_monitor.stop()
         collector.stop()
     return 0
 

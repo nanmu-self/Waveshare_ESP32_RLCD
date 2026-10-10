@@ -28,7 +28,7 @@ def build(firmware_build, reporter_exe):
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(source, target)
     (licenses/'build-environment.json').write_text(json.dumps(packages, indent=2), encoding='utf-8')
-    # Wheel metadata alone omits several runtime licenses (notably Qt/WinRT).
+    # Wheel metadata alone omits several runtime licenses (notably Qt).
     root = HERE.parents[1]
     required = root/'release/licenses/windows-audit/supplemental/Qt-6.8.3/LGPL-3.0-only.txt'
     if not required.is_file():

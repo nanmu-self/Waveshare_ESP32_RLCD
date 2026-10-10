@@ -6,7 +6,7 @@ Windows Reporter and installer self-tests passed. This build still requires hard
 
 ## 本版功能
 
-- 显示电脑性能、Agent 状态与额度、音乐信息。
+- 显示电脑性能、Agent 状态与额度、日历和天气。
 - 局域网发现和选择电脑。
 - Windows 图形安装器，支持安装 Reporter、保留配置升级和首次安装；刷写前备份，写入后校验。
 - 一次唤醒一轮问答，回答期间不接受语音打断（语音实测待完成）。
@@ -32,6 +32,6 @@ Windows Reporter and installer self-tests passed. This build still requires hard
 
 Windows 本机安装、保留配置升级、亮屏、联网、绑定保留及性能数据显示已验收。语音、首次清空安装和另一台 Windows 测试待完成；macOS 本轮未重新验收。
 
-音乐进度为估算值。Windows 包未代码签名。完整验收与发布准备情况见 [发布检查表](RELEASE_CHECKLIST.md)。
+Windows 包未代码签名。完整验收与发布准备情况见 [发布检查表](RELEASE_CHECKLIST.md)。
 
 反馈时提供系统版本、安装模式和错误信息；不要公开完整 Flash 备份或含凭据的日志。

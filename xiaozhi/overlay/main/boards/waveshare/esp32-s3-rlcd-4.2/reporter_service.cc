@@ -95,10 +95,6 @@ int32_t JsonRelativeSeconds(const cJSON* object, const char* name) {
     return static_cast<int32_t>(value);
 }
 
-uint32_t NonNegativeSeconds(float value) {
-    return static_cast<uint32_t>(std::max(0.0f, value));
-}
-
 }  // namespace
 
 ReporterService& ReporterService::GetInstance() {
@@ -389,24 +385,6 @@ void ReporterService::ParseDiscovery(const char* payload, size_t length,
             JsonFloat(performance, "cpu_temp_c", metrics.cpu_temperature_c);
         metrics.gpu_temperature_valid =
             JsonFloat(performance, "gpu_temp_c", metrics.gpu_temperature_c);
-
-        JsonString(root, "media_status", metrics.media_status,
-                   sizeof(metrics.media_status));
-        JsonString(root, "media_title", metrics.media_title,
-                   sizeof(metrics.media_title));
-        JsonString(root, "media_artist", metrics.media_artist,
-                   sizeof(metrics.media_artist));
-        JsonString(root, "media_lyric", metrics.media_lyric,
-                   sizeof(metrics.media_lyric));
-        float media_position = 0;
-        float media_duration = 0;
-        JsonFloat(root, "media_position", media_position);
-        JsonFloat(root, "media_duration", media_duration);
-        metrics.media_position_seconds = NonNegativeSeconds(media_position);
-        metrics.media_duration_seconds = NonNegativeSeconds(media_duration);
-        const cJSON* media_available = JsonItem(root, "media_available");
-        metrics.media_available = cJSON_IsTrue(media_available) ||
-                                  metrics.media_title[0] != '\0';
 
         if (base_metrics) metrics_ = metrics;
         else ClearSelectedMetrics();

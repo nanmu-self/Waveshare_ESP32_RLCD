@@ -10,7 +10,6 @@
 | PySide6 / Shiboken6 | 6.8.3 | https://github.com/qt/pyside-setup/tree/v6.8.3 |
 | esptool | 5.4.0 | https://github.com/espressif/esptool/tree/v5.4.0 |
 | pyserial | 3.5 | https://github.com/pyserial/pyserial/tree/v3.5 |
-| PyWinRT（runtime/Foundation/Collections/Media.Control） | 3.2.1 | https://github.com/pywinrt/pywinrt/tree/v3.2.1 |
 | CPython | 3.11.0 | https://github.com/python/cpython/tree/v3.11.0 |
 | PyInstaller | 6.21.0 | https://github.com/pyinstaller/pyinstaller/tree/v6.21.0 |
 | ESP-IDF | 6.0.2 | https://github.com/espressif/esp-idf/tree/v6.0.2 |

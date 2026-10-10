@@ -35,8 +35,6 @@ final class ReporterApp: NSObject, NSApplicationDelegate {
     var agent: NSTextField!
     var quota: NSTextField!
     var device: NSTextField!
-    var musicTitle: NSTextField!
-    var musicDetail: NSTextField!
     var updated: NSTextField!
     var toggle: NSButton!
     var diagnostic: NSButton!
@@ -156,15 +154,10 @@ final class ReporterApp: NSObject, NSApplicationDelegate {
         upload = text(network, "↑  —", 20, 38, 320, 29, 19, .medium)
         download = text(network, "↓  —", 363, 38, 320, 29, 19, .medium)
 
-        let codex = card(page, NSRect(x: 28, y: 422, width: 346, height: 102))
-        text(codex, "CODEX", 20, 15, 160, 21, 11, .semibold, muted)
-        agent = text(codex, "等待数据", 20, 39, 306, 27, 20, .semibold)
-        quota = text(codex, "短周期剩余 —    ·    周额度剩余 —", 20, 73, 306, 23, 12, .regular, muted)
-
-        let music = card(page, NSRect(x: 388, y: 422, width: 344, height: 102))
-        text(music, "网易云音乐", 20, 15, 304, 21, 11, .semibold, muted)
-        musicTitle = text(music, "等待播放", 20, 39, 304, 27, 16, .semibold)
-        musicDetail = text(music, "打开网易云并播放歌曲", 20, 73, 304, 23, 11, .regular, muted)
+        let codex = card(page, NSRect(x: 28, y: 422, width: 704, height: 102))
+        text(codex, "CODEX", 20, 15, 664, 21, 11, .semibold, muted)
+        agent = text(codex, "等待数据", 20, 39, 664, 27, 20, .semibold)
+        quota = text(codex, "短周期剩余 —    ·    周额度剩余 —", 20, 73, 664, 23, 12, .regular, muted)
 
         let board = card(page, NSRect(x: 28, y: 538, width: 704, height: 72))
         text(board, "开发板通信", 20, 12, 180, 22, 12, .medium, muted)
@@ -282,24 +275,6 @@ final class ReporterApp: NSObject, NSApplicationDelegate {
         agent.stringValue = (names[code] ?? "状态不可用") + (code == "working" ? "  ·  \(count) 个任务" : "")
         let limits = body["codex_quota"] as? [String: Any] ?? [:]
         quota.stringValue = "短周期剩余 \(percent(limits["short_remaining_percent"]))    ·    周额度剩余 \(percent(limits["week_remaining_percent"]))"
-        let media = body["media"] as? [String: Any] ?? [:]
-        if media["available"] as? Bool == true {
-            musicTitle.stringValue = media["title"] as? String ?? ""
-            musicTitle.toolTip = musicTitle.stringValue
-            let singer = media["artist"] as? String ?? ""
-            let status = media["playback_status"] as? String == "playing" ? "播放中" : "已暂停"
-            func clock(_ value: Any?) -> String {
-                let seconds = max(0, (value as? NSNumber)?.intValue ?? 0)
-                return String(format: "%d:%02d", seconds / 60, seconds % 60)
-            }
-            musicDetail.stringValue = "\(status) · \(clock(media["position_seconds"]))/\(clock(media["duration_seconds"])) · \(singer)"
-            musicDetail.toolTip = musicDetail.stringValue
-        } else {
-            musicTitle.stringValue = "未获取到歌曲"
-            musicTitle.toolTip = nil
-            musicDetail.stringValue = "请在网易云播放歌曲"
-            musicDetail.toolTip = nil
-        }
         let peers = body["devices"] as? [[String: Any]] ?? []
         let ips = peers.compactMap { $0["ip"] as? String }.joined(separator: "、")
         device.stringValue = peers.isEmpty ? "尚未收到请求，请确认开发板与 Mac 连接同一 Wi-Fi。"
@@ -324,10 +299,6 @@ final class ReporterApp: NSObject, NSApplicationDelegate {
         upload.stringValue = "↑  —"
         download.stringValue = "↓  —"
         agent.stringValue = "等待服务启动"
-        musicTitle.stringValue = "等待服务启动"
-        musicDetail.stringValue = "—"
-        musicTitle.toolTip = nil
-        musicDetail.toolTip = nil
         quota.stringValue = "短周期剩余 —    ·    周额度剩余 —"
         device.stringValue = "服务停止时，不向开发板发送数据。"
         updated.stringValue = lastSuccess == nil ? "尚未连接服务" : "连接中断，已清除旧数据"

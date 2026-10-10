@@ -31,13 +31,6 @@ struct PanelReporterMetrics {
     int32_t codex_month_resets_in = -1;
     bool codex_quota_stale = false;
     char quota_provider_title[24] = "Codex";
-    bool media_available = false;
-    uint32_t media_position_seconds = 0;
-    uint32_t media_duration_seconds = 0;
-    char media_status[12] = "stopped";
-    char media_title[160] = {};
-    char media_artist[100] = {};
-    char media_lyric[200] = {};
     uint32_t latency_ms = 0;
     char reporter_id[40] = {};
     char computer_name[40] = {};

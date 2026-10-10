@@ -1,6 +1,5 @@
 # Syna project-specific code and modifications: Copyright (c) 2026 黑沐.
 # SPDX-License-Identifier: MIT; third-party notices remain applicable.
-import asyncio
 import json
 import os
 from pathlib import Path
@@ -14,7 +13,6 @@ import unittest
 import urllib.request
 from unittest.mock import MagicMock, Mock, patch
 
-import media_monitor
 import platform_support
 import reporter
 from macos_service import service_definition
@@ -129,27 +127,6 @@ class MacSupportTests(unittest.TestCase):
                 self.assertLessEqual(snapshot.gpu_percent, 100)
         finally:
             collector.stop()
-
-    def test_no_media_channel_is_safe(self):
-        monitor = media_monitor.NeteaseMediaMonitor()
-        self.assertIsNone(monitor._local)
-        with patch.object(monitor._mac or monitor._cdp, "read", return_value=None):
-            result = asyncio.run(monitor._read(None))
-        self.assertFalse(result.available)
-
-    def test_cdp_seek_to_zero_does_not_keep_estimated_progress(self):
-        monitor = media_monitor.NeteaseMediaMonitor()
-        monitor._mac = None  # Exercise the retained Windows/CDP route.
-        monitor._clock_title = "Song"
-        monitor._clock_position = 120
-        monitor._clock_status = "playing"
-        with patch.object(monitor._cdp, "read", return_value={
-            "title": "Song", "artist": "Artist", "position": 0,
-            "duration": 200, "playback_status": "playing", "song_id": 123
-        }), patch.object(monitor._resolver, "resolve", return_value=(123, [(0, "line")])):
-            result = asyncio.run(monitor._read(None))
-        self.assertTrue(result.available)
-        self.assertEqual(result.position_seconds, 0)
 
     def test_launchd_preserves_paths_with_spaces_and_venv(self):
         definition = service_definition(Path("/tmp/中文 project/.venv/bin/python"),

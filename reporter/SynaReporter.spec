@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_submodules, copy_metadata
+from PyInstaller.utils.hooks import copy_metadata
 from pathlib import Path
 
 # Keep Qt/PySide notices in the bundle; the UI is dynamically linked.
@@ -11,16 +11,12 @@ notices += [(str(Path(SPECPATH).parent / "LICENSE"), "Legal"),
             (str(Path(SPECPATH).parent / "release/licenses"), "Legal/third-party"),
             (str(Path(SPECPATH).parent / "docs/THIRD_PARTY_SOURCES.md"), "Legal")]
 
-hiddenimports = []
-for package in ("winrt", "pycaw", "comtypes"):
-    hiddenimports += collect_submodules(package)
-
 a = Analysis(
     ["reporter.py"],
     pathex=[SPECPATH],
     binaries=[],
     datas=notices,
-    hiddenimports=hiddenimports,
+    hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

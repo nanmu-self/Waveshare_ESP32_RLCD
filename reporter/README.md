@@ -3,7 +3,7 @@
 macOS 基础版已适配：双击 `start.command` 启动，或使用
 `dist-macos/SynaReporter.app`。功能范围、登录启动和测试见 [macOS 使用说明](MACOS.md)。
 Windows 状态窗口已按 Mac 版布局移植，2026-09-14 已完成首轮 Windows 本机验证并构建新 `dist/SynaReporter.exe`；使用方法及剩余验证项见 [Windows 窗口说明](WINDOWS-UI.md)。
-下面的网易云、NVIDIA 指标及安装方式适用于 Windows。
+下面的 NVIDIA 指标及安装方式适用于 Windows。
 
 Windows 当前主入口为 `installer/windows` 的一体安装器，已在作者电脑完成独立版安装验收。源码整理目录不包含预编译 EXE；请按 [构建说明](../docs/BUILD.md) 生成。
 
@@ -25,7 +25,7 @@ release\SynaReporter-Setup-1.0.0.exe
 powershell -ExecutionPolicy Bypass -File .\reporter\start.ps1
 ```
 
-首次运行会在 `reporter/.venv` 创建独立 Python 环境并安装 `psutil` 与 Windows Runtime 媒体接口。Reporter 监听：
+首次运行会在 `reporter/.venv` 创建独立 Python 环境并安装 `psutil`。Reporter 监听：
 
 - HTTP `8765`：`/api/v1/health`、`/api/v1/status`
 - UDP `8766`：响应 `AI_PANEL_DISCOVER_V1`，同时返回电脑身份、Agent 状态和性能快照
@@ -70,23 +70,9 @@ Reporter 优先从 Codex 本地 `logs_2.sqlite` 提取固定格式的任务开�
 
 Codex 未登录时 Reporter 会立刻清除旧额度，上报登录所需状态；屏幕显示“请登录”，两项额度显示 `--`。登录成功后最迟在下一次 30 秒轮询恢复。
 
-## 网易云音乐与歌词
-
-Reporter 优先从仅监听 `127.0.0.1:9223` 的本地 CDP 通道直接读取网易云的歌曲名、歌手、播放状态和真实进度；旧版客户端仍可用 Windows `GlobalSystemMediaTransportControlsSessionManager`。网易云 3.1.39 等新版禁用 Windows 媒体会话时，Reporter 会从窗口标题和本地 `playingList` 只读获取当前歌曲、歌手、歌曲 ID 与时长，因此普通快捷方式启动也不会整块丢失媒体信息。需要精确进度时执行：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\reporter\start_netease_precise.ps1 -Restart
-```
-
-脚本会先完整退出现有网易云进程，再以精确模式启动，并验证端口确实可用；验证失败会明确报错，不再出现“看似启动成功、实际没有媒体信息”的情况。以后手动退出网易云后也应使用这个脚本启动。
-
-歌曲变化时，Reporter 优先从网易云本地缓存文件名解析候选歌曲 ID，再用歌曲名和歌手严格校验；找不到缓存匹配项时才调用网易云搜索接口。歌词按 LRC 时间戳匹配当前播放位置，网络不可用、歌曲无歌词或无法可靠匹配时显示“暂无歌词”，不会套用同名翻唱歌曲的歌词。歌曲 ID 和歌词会缓存到下一次切歌，正常播放时不会反复请求网络。
-
-首页字体覆盖常用中文、日文平假名、片假名、半角片假名和 JIS 汉字，可动态显示中日文歌曲、歌手和单句歌词。当前只适配网易云音乐桌面客户端。如果网易云未运行、刚重启后尚未加载歌曲或未播放，屏幕显示“未播放”。
-
 ESP32 的实时数据链路使用 UDP 请求/响应，因此不需要为 HTTP `8765` 创建 Windows TCP 入站规则；HTTP 接口只是本机诊断入口。不要开放公用网络防火墙权限，也不要在路由器上做端口映射。
 
-开发板支持发现最多 8 台 Reporter、列表翻页、选择当前电脑并按稳定 Reporter ID 和记忆的指纹锁定当前选择；板卡自身以 Wi-Fi STA MAC 作为稳定 ID。该机制用于避免多电脑/多板误串，不等同于抵御恶意局域网攻击；带随机 nonce 的双向消息认证和撤销列表仍待后续安全加固。Agent 状态与额度现已接入 Codex，媒体与歌词当前仅支持网易云音乐桌面客户端。
+开发板支持发现最多 8 台 Reporter、列表翻页、选择当前电脑并按稳定 Reporter ID 和记忆的指纹锁定当前选择；板卡自身以 Wi-Fi STA MAC 作为稳定 ID。该机制用于避免多电脑/多板误串，不等同于抵御恶意局域网攻击；带随机 nonce 的双向消息认证和撤销列表仍待后续安全加固。Agent 状态与额度现已接入 Codex。
 
 构建发布包：
 
