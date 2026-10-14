@@ -722,7 +722,7 @@ void ui_show_dashboard(void)
         screen, "套餐", &ui_font_14_cjk, 19, 113);
     dashboard_quota_source_value = make_label(
         screen, "--", &ui_font_14_cjk, 100, 113);
-    lv_obj_set_width(dashboard_quota_source_value, 68);
+    lv_obj_set_width(dashboard_quota_source_value, 120);
     lv_obj_set_style_text_align(dashboard_quota_source_value,
                                 LV_TEXT_ALIGN_RIGHT, 0);
 
@@ -1467,6 +1467,20 @@ static bool station_ip_text(char *buf, size_t len)
     snprintf(buf, len, IPSTR, IP2STR(&ip_info.ip));
     return true;
 }
+
+/* Get the SSID of the currently connected WiFi network. */
+static bool station_ssid_text(char *buf, size_t len)
+{
+    wifi_ap_record_t ap_info = {0};
+    if(esp_wifi_sta_get_ap_info(&ap_info) != ESP_OK) return false;
+    if(ap_info.ssid[0] == '\0') return false;
+    /* ssid is 33 bytes (32 chars + null); copy at most len-1 chars. */
+    size_t ssid_len = strnlen((const char*)ap_info.ssid, 32);
+    if(ssid_len >= len) ssid_len = len - 1;
+    memcpy(buf, ap_info.ssid, ssid_len);
+    buf[ssid_len] = '\0';
+    return true;
+}
 #else
 /* Host simulator has no esp-netif; the About page shows a placeholder. */
 static bool station_ip_text(char *buf, size_t len)
@@ -1475,9 +1489,17 @@ static bool station_ip_text(char *buf, size_t len)
     (void)len;
     return false;
 }
+
+static bool station_ssid_text(char *buf, size_t len)
+{
+    (void)buf;
+    (void)len;
+    return false;
+}
 #endif
 
 static lv_obj_t *about_ip_label;
+static lv_obj_t *about_wifi_label;
 
 static void refresh_about_ip(void)
 {
@@ -1492,6 +1514,19 @@ static void refresh_about_ip(void)
     /* Skip invalidation on the monochrome panel when unchanged. */
     if(strcmp(lv_label_get_text(about_ip_label), text) != 0) {
         lv_label_set_text(about_ip_label, text);
+    }
+    
+    if(about_wifi_label != NULL && lv_obj_is_valid(about_wifi_label)) {
+        char ssid[32];
+        char wifi_text[48];
+        if(station_ssid_text(ssid, sizeof(ssid))) {
+            snprintf(wifi_text, sizeof(wifi_text), "WiFi：%s", ssid);
+        } else {
+            snprintf(wifi_text, sizeof(wifi_text), "WiFi：未连接");
+        }
+        if(strcmp(lv_label_get_text(about_wifi_label), wifi_text) != 0) {
+            lv_label_set_text(about_wifi_label, wifi_text);
+        }
     }
 }
 
@@ -1512,9 +1547,11 @@ static void ui_show_about(void)
         make_label(about_screen, "原创部分 MIT - 保留版权声明", &ui_font_14_cjk, 18, 163);
         make_label(about_screen, "基于 xiaozhi-esp32 二次开发", &ui_font_14_cjk, 18, 188);
         make_label(about_screen, "感谢小智、黑沐、LVGL及开源贡献者", &ui_font_14_cjk, 18, 213);
+        about_wifi_label = make_label(about_screen, "WiFi：未连接",
+                                      &ui_font_14_cjk, 18, 250);
         about_ip_label = make_label(about_screen, "IP 地址：未连接",
-                                    &ui_font_14_cjk, 18, 250);
-        make_label(about_screen, "天气数据：和风天气", &ui_font_14_cjk, 18, 274);
+                                    &ui_font_14_cjk, 18, 274);
+        make_label(about_screen, "天气数据：和风天气", &ui_font_14_cjk, 18, 298);
     }
     refresh_about_ip();
     lv_screen_load(about_screen);

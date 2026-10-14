@@ -36,7 +36,7 @@ Windows 电脑端安装和保留配置刷机已由作者本机验收。macOS 有
 
 构建入口见 [构建说明](docs/BUILD.md)，已知限制见 [发布检查表](docs/RELEASE_CHECKLIST.md)。
 
-版本内容见 [发布说明](docs/RELEASE_NOTES_1.0.0.md)。
+版本内容见 [发布说明](docs/RELEASE_NOTES_1.0.0.md)，日常使用见 [使用说明](docs/USAGE.md)。
 
 ## 作者与许可
 
